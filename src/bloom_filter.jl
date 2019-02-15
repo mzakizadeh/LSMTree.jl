@@ -1,48 +1,19 @@
-mutable struct BloomFilter
+mutable struct BloomFilter{K}
     table::Array
-
-    BloomFilter(length::Int) = new(fill(false, length))
+    BloomFilter{K}(length::Int) where K = new{K}(fill(false, length))
 end
 
-function hash_1(b::BloomFilter, k::UInt64)
-    key = k
-    key = ~key + (key<<15)
-    key = key ^ (key>>12)
-    key = key + (key<<2)
-    key = key ^ (key>>4)
-    key = key * 2057
-    key = key ^ (key>>16)
-    return key % length(b.table) + 1
-end
+hash_1(b::BloomFilter{K}, k::K) where K = convert(Int128, hash(k, UInt(1))) % length(b.table) + 1
+hash_2(b::BloomFilter{K}, k::K) where K = convert(Int128, hash(k, UInt(2))) % length(b.table) + 1
+hash_3(b::BloomFilter{K}, k::K) where K = convert(Int128, hash(k, UInt(3))) % length(b.table) + 1
 
-function hash_2(b::BloomFilter, k::UInt64)
-    key = k
-    key = (key+0x7ed55d16) + (key<<12)
-    key = (key^0xc761c23c) ^ (key>>19)
-    key = (key+0x165667b1) + (key<<5)
-    key = (key+0xd3a2646c) ^ (key<<9)
-    key = (key+0xfd7046c5) + (key<<3)
-    key = (key^0xb55a4f09) ^ (key>>16)
-    return key % length(b.table) + 1
-end
-
-function hash_3(b::BloomFilter, k::UInt64)
-    key = k
-    key = (key^61) ^ (key>>16)
-    key = key + (key<<3)
-    key = key ^ (key>>4)
-    key = key * 0x27d4eb2d
-    key = key ^ (key>>15)
-    return key % length(b.table) + 1
-end
-
-function set(b::BloomFilter, key::UInt64)
+function set(b::BloomFilter{K}, key::K) where K
     b.table[hash_2(b, key)] = true;
     b.table[hash_3(b, key)] = true;
     b.table[hash_1(b, key)] = true;
 end
 
-function isset(b::BloomFilter, key::UInt64)
+function isset(b::BloomFilter{K}, key::K) where K
     return (b.table[hash_1(b, key)]
          && b.table[hash_2(b, key)]
          && b.table[hash_3(b, key)])
