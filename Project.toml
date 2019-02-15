@@ -1,0 +1,8 @@
+name = "LSMTree"
+uuid = "b3d7e270-312d-11e9-29de-ab67f25bb4a9"
+authors = ["Mahdi Zakizadeh <mahdizakizadeh.me@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+Blobs = "163b9779-6631-5f90-a265-3de947924de8"
+DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"

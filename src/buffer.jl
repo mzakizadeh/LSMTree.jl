@@ -5,6 +5,8 @@ mutable struct Buffer
     Buffer(max_size::Integer) = new(max_size, SortedSet{Entry}()) 
 end
 
+Base.empty!(b::Buffer) = b.entries = empty(b.entries)
+
 function get(b::Buffer, key)
     result = searchsortedfirst(b.entries, key)
     if result.key != key 
@@ -22,5 +24,3 @@ function Base.push!(b::Buffer, key, value, deleted=false)
         return true
     end
 end
-
-empty!(b::Buffer) = b.entries = empty(b.entries)
