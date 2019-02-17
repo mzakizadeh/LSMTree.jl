@@ -2,11 +2,13 @@ mutable struct Level{K, V}
     id::Integer
     size::Integer
     max_size::Integer
-    blobs::Blob{BlobVector{Entry{K, V}}}
+    entries::BlobVector{Entry{K, V}}
     # bf::BloomFilter
     function Level{K, V}(id::Integer, max_size::Integer) where {K, V}
-        bbv = Blobs.malloc_and_init(BlobVector{Entry{K, V}}, max_size)
-        new{K, V}(id, 0, max_size, bbv)
+        T = Entry{K, V}
+        data = Blob{T}(Libc.malloc(sizeof(T) * max_size), 0, sizeof(T) * max_size)
+        bv = BlobVector{T}(data, max_size)
+        new{K, V}(id, 0, max_size, bv)
     end
 end
 
@@ -17,7 +19,7 @@ function write(l::Level{K, V}) where {K, V}
     fname = joinpath(@__DIR__, "..", "blobs", "$(l.id)") 
     open(fname, "w+") do f
         size = l.max_size * sizeof(Entry{K, V})
-        unsafe_write(f, pointer(l.blob), size)
+        unsafe_write(f, pointer(l.entries.data), size)
     end
 end
 
@@ -25,14 +27,14 @@ function read(l::Level{K, V}) where {K, V}
     fname = joinpath(@__DIR__, "..", "blobs", l.id) 
     open(fname, "r") do f
         size = l.max_size * sizeof(Entry{K, V})
-        unsafe_read(f, l.entries.data, size)
+        unsafe_read(f, pointer(l.entries.data), size)
     end
 end
 
 function Base.insert!(l::Level{K, V}, e::Entry{K, V}) where {K, V} 
     # set(l.bloom_filter, e.key)
-    l.size = l.size + 1
-    l.blob[][l.size] = e
+    l.size += 1
+    l.entries[l.size] = e
 end
 
 function Base.get(l::Level, k::K) where K 
