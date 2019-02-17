@@ -1,7 +1,6 @@
 module LSMTree
 
 using Blobs
-import DataStructures.SortedSet
 
 include("entry.jl")
 include("buffer.jl")
