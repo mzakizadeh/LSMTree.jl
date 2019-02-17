@@ -1,8 +1,7 @@
-mutable struct Buffer
+mutable struct Buffer{K, V}
     max_size::Integer
-    entries::SortedSet{Entry}
-
-    Buffer(max_size::Integer) = new(max_size, SortedSet{Entry}()) 
+    entries::SortedSet{Entry{K, V}}
+    Buffer{K, V}(max_size::Integer) where {K, V} = new(max_size, SortedSet{Entry{K, V}}()) 
 end
 
 Base.empty!(b::Buffer) = b.entries = empty(b.entries)
@@ -15,11 +14,11 @@ function get(b::Buffer, key)
     return isdeleted(result) ? nothing : result.val
 end
 
-function Base.push!(b::Buffer, key, value, deleted=false)
+function Base.push!(b::Buffer{K, V}, key, value, deleted=false) where {K, V}
     if length(b.entries) == b.max_size
         return false
     else
-        entry = Entry{typeof(key), typeof(value)}(key, value, deleted)
+        entry = Entry{K, V}(key, value, deleted)
         push!(b.entries, entry)
         return true
     end

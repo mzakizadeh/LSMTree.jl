@@ -1,8 +1,8 @@
 mutable struct LSM{K, V}
-    buffer::Buffer
+    buffer::Buffer{K, V}
     levels::Vector{Level}
     function LSM{K, V}(buffer_max_entries::Integer, depth::Integer, fanout::Integer) where {K, V}
-        @assert depth > 1 "cannot craete a tree with this depth"
+        @assert depth > 2 "cannot craete a tree with this depth"
         @assert isbitstype(K) && isbitstype(V) "not a isbitstype type"
         max_size = buffer_max_entries * fanout
         levels = Vector{Level}()
@@ -10,7 +10,7 @@ mutable struct LSM{K, V}
             push!(levels, Level{K, V}(i, max_size))
             max_size *= fanout
         end
-        new{K, V}(Buffer(buffer_max_entries), levels)
+        new{K, V}(Buffer{K, V}(buffer_max_entries), levels)
     end
 end
 
