@@ -16,19 +16,25 @@ end
 
 Base.delete!(t::LSM, key) = push!(t.buffer, key, missing)
 
+function Base.length(t::LSM)
+    count = 0
+    for l in t.levels
+        count += l.max_size
+    end
+    return count + t.buffer.max_size
+end
+
 function merge_down!(levels, i) 
     current = levels[i]
     next = levels[i + 1]
 
     if !isfull(current)
         return
-    else i == length(levels)
+    elseif i == length(levels)
         @error "no more space in tree"
     end 
 
-    if isfull(next)
-        merge_down!(levels, i + 1)
-    end
+    merge_down!(levels, i + 1)
     
     read(current)
     for e in collect(current.entries)
@@ -61,4 +67,5 @@ function Base.get(t::LSM, key)
         val = get(l, key)
         if val != nothing return val end
     end
+    print("not found")
 end

@@ -13,9 +13,8 @@ end
 Base.empty!(b::Buffer) = b.size = 0
 
 # Binary search
-function get(b::Buffer, key)
-    @assert key == 0 || key > size "out of bound"
-    i = bsearch(b.entries, 1, size, key)
+function Base.get(b::Buffer{K, V}, key) where {K, V}
+    i = bsearch(b.entries, 1, b.size, convert(K, key))
     if i > 0
         result = b.entries[i]
         return isdeleted(result) ? nothing : result.val
@@ -40,12 +39,12 @@ function Base.push!(b::Buffer{K, V}, key, val, deleted=false) where {K, V}
     end
 end
 
-function bsearch(bv::BlobVector, l::Integer, r::Integer, k::K) where K
+function bsearch(bv::BlobVector, l::Integer, r::Integer, k::K) where {K, V}
     while l <= r
-        mid = l + (r - l) / 2
+        mid = convert(Int, floor(l + (r - l) / 2))
         if bv[mid].key == k
             return mid
-        elseif bv[mid] < k 
+        elseif bv[mid].key < k 
             l = mid + 1
         else
             r = mid - 1

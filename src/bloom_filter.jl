@@ -13,7 +13,8 @@ function set(b::BloomFilter{K}, key::K) where K
     b.table[hash_1(b, key)] = true;
 end
 
-function isset(b::BloomFilter{K}, key::K) where K
+function isset(b::BloomFilter{K}, key) where K
+    key = convert(K, key)
     return (b.table[hash_1(b, key)]
          && b.table[hash_2(b, key)]
          && b.table[hash_3(b, key)])
