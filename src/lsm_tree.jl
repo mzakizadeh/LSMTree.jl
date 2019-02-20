@@ -36,12 +36,8 @@ function merge_down!(levels, i)
 
     merge_down!(levels, i + 1)
     
-    read(current)
-    for e in collect(current.entries)
-        if (i == length(levels) - 1) && isdeleted(e) continue end
-        insert!(next, e)
-    end
-    write(next)
+    c = read(current)
+    merge!(next, c)
     empty!(current)
 end
 
@@ -50,11 +46,7 @@ function Base.insert!(t::LSM, key, val)
     merge_down!(t.levels, 1)
 
     next = t.levels[1]
-    for e in collect(t.buffer.entries)
-        if (2 == length(t.levels)) && isdeleted(e) continue end
-        insert!(next, e)
-    end
-    write(next)
+    merge!(next, t.buffer.entries)
     empty!(t.buffer)
     
     push!(t.buffer, key, val)
