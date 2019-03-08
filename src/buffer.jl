@@ -23,7 +23,7 @@ function Base.get(b::Buffer{K, V}, key) where {K, V}
 end
 
 # Insertion sort
-function Base.push!(b::Buffer{K, V}, key, val, deleted=false) where {K, V}
+function Base.put!(b::Buffer{K, V}, key, val, deleted=false) where {K, V}
     if b.size == b.max_size
         return false
     else
