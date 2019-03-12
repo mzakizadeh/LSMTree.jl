@@ -11,6 +11,7 @@ mutable struct Level{K, V}
     bounds::Vector{K}
     function Level{K, V}(depth::Integer, max_size::Integer) where {K, V}
         tables = Vector{Table{K, V}}()
+        push!(tables, Table{K, V}(Vector{Blob{Entry{K, V}}}()))
         bounds = Vector{K}()
         # bf = BloomFilter{K}(convert(Int, max_size * 0.5))
         new{K, V}(depth, 0, max_size, tables, bounds)
@@ -28,10 +29,10 @@ function Base.get(l::Level{K, V}, key::K) where {K, V}
 end
 
 function compact!(l::Level{K, V}, t::Table{K, V}) where {K, V} 
-    splitted_table = split_with_bounds(l.bounds, t.entries)
+    splitted_table = partition_with_bounds(l.bounds, t.entries)
     for i in 1:length(l.tables)
         if length(splitted_table[i]) != 0
-            table = merge(t.tables[i], splitted_table[i])
+            table = merge(l.tables[i], splitted_table[i])
             if sizeof(table) > TABLE_THRESHOLD
                 (p1, p2) = split(table)
                 deleteat!(l.tables, i)
@@ -43,15 +44,34 @@ function compact!(l::Level{K, V}, t::Table{K, V}) where {K, V}
     end
 end
 
-function split_with_bounds(entries::Vector, bounds::Vector)
-    if length(bounds) == 0 return [entries] end
+function merge!(l::Level, parts::Vector)
+    for i in 1:length(l.tables)
+        if length(parts[i]) != 0
+            table = merge(l.tables[i], parts[i])
+            if sizeof(table) > TABLE_THRESHOLD
+                (p1, p2) = split(table)
+                deleteat!(l.tables, i)
+                insert!(l.tables, i, p2)
+                insert!(l.tables, i, p1)
+                insert!(l.bounds, i, max(p1))
+            else 
+                l.tables[i] = table 
+            end
+        end
+    end
+    return l
+end
+
+function partition_with_bounds(bounds::Vector, entries::Vector)
+    partitioning_result = Vector()
+    length(bounds) == 0 && return push!(partitioning_result, entries)
 
     indecies = []
     i, j = 1, 1
     while i <= length(entries) && length(indecies) < length(bounds)
-        if entries[i].key > bounds[j]
+        if entries[i].key[] > bounds[j]
             j += 1
-            while j <= length(bounds) && entries[i].key > bounds[j]
+            while j <= length(bounds) && entries[i].key[] > bounds[j]
                 push!(indecies, i)
                 j += 1
             end
@@ -65,15 +85,14 @@ function split_with_bounds(entries::Vector, bounds::Vector)
         end
     end
 
-    split_result = []
     for k in 1:length(bounds) + 1
         if k == 1
-            push!(split_result, entries[1:indecies[k] - 1])
+            push!(partitioning_result, entries[1:indecies[k] - 1])
         elseif k == length(bounds) + 1
-            push!(split_result, entries[indecies[length(bounds)]:length(entries)])
+            push!(partitioning_result, entries[indecies[length(bounds)]:length(entries)])
         else
-            push!(split_result, entries[indecies[k - 1]:indecies[k] - 1])
+            push!(partitioning_result, entries[indecies[k - 1]:indecies[k] - 1])
         end
     end
-    return split_result
+    return partitioning_result
 end

@@ -2,7 +2,7 @@ module LSMTree
 
 using Blobs
 
-function bsearch(bv::AbstractArray{Any, 1}, l::Integer, r::Integer, k::K) where K
+function bsearch(bv::Union{Vector, BlobVector}, l::Integer, r::Integer, k::K) where K
     while l <= r
         mid = convert(Int, floor(l + (r - l) / 2))
         if bv[mid].key == k
@@ -31,8 +31,8 @@ include("bloom_filter.jl")
 include("table.jl")
 include("buffer.jl")
 include("level.jl")
-include("level_list.jl")
+include("leveled_tree.jl")
 
-export LevelList, insert!, get, delete!
+export LeveledTree, insert!, get, delete!
 
 end
