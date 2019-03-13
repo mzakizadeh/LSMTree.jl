@@ -12,6 +12,7 @@ function Base.put!(t::LeveledTree, key, val)
     put!(t.buffer, key, val)
     if isfull(t.buffer)
         compact!(t)
+        t.levels[1].size += length(t.buffer.entries)
         merge!(t.levels[1], partition_with_bounds(t.levels[1].bounds, t.buffer.entries))
         empty!(t.buffer)
     end
@@ -31,7 +32,7 @@ function compact!(t::LeveledTree{K, V}) where {K, V}
         i += 1
     end
     if ismissing(next)
-        newsize = length(t.levels) != 0 ? t.levels[length(t.levels)].max_size * t.fanout : t.buffer.max_size
+        newsize = length(t.levels) != 0 ? t.levels[length(t.levels)].max_size * t.fanout : t.buffer.max_size * t.fanout
         push!(t.levels, Level{K, V}(length(t.levels) + 1, newsize))
         if length(t.levels) == 1 return end
         current = t.levels[length(t.levels) - 1]
@@ -40,10 +41,12 @@ function compact!(t::LeveledTree{K, V}) where {K, V}
     for table in current.tables
         compact!(next, table)
     end
+    empty!(current)
     while i > 1 
         for table in t.levels[i - 1].tables
             compact!(t.levels[i], table)
         end
+        empty!(t.levels[i - 1])
         i -= 1 
     end
 end

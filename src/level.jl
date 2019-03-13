@@ -1,4 +1,4 @@
-const TABLE_THRESHOLD = 2000000
+const TABLE_THRESHOLD = 2E6
 
 mutable struct Level{K, V}
     depth::Integer
@@ -18,30 +18,25 @@ mutable struct Level{K, V}
     end
 end
 
-isfull(l::Level) = l.size == l.max_size
+isfull(l::Level) = l.size >= l.max_size
+
+function Base.empty!(l::Level{K, V}) where {K, V}
+    empty!(l.tables)
+    push!(l.tables, Table{K, V}(Vector{Blob{Entry{K, V}}}()))
+    l.size = 0
+end
 
 function Base.get(l::Level{K, V}, key::K) where {K, V} 
     # if isset(l.bf, key)
         for t in l.tables
-            if key > t.min && key < t.max return get(t, key) end
+            if key > min(t) && key < max(t) return get(t, key) end
         end
     # else return nothing end
 end
 
 function compact!(l::Level{K, V}, t::Table{K, V}) where {K, V} 
-    splitted_table = partition_with_bounds(l.bounds, t.entries)
-    for i in 1:length(l.tables)
-        if length(splitted_table[i]) != 0
-            table = merge(l.tables[i], splitted_table[i])
-            if sizeof(table) > TABLE_THRESHOLD
-                (p1, p2) = split(table)
-                deleteat!(l.tables, i)
-                insert!(l.tables, p2)
-                insert!(l.tables, p1)
-                insert!(l.bounds, i, max(p1))
-            end
-        end
-    end
+    l.size += length(t)
+    merge!(l, partition_with_bounds(l.bounds, t.entries))
 end
 
 function merge!(l::Level, parts::Vector)
@@ -59,7 +54,6 @@ function merge!(l::Level, parts::Vector)
             end
         end
     end
-    return l
 end
 
 function partition_with_bounds(bounds::Vector, entries::Vector)
@@ -78,11 +72,9 @@ function partition_with_bounds(bounds::Vector, entries::Vector)
             push!(indecies, i)
         end
         i += 1
-        if i > length(entries)
-            while length(indecies) < length(bounds)
-                push!(indecies, i)
-            end
-        end
+    end
+    while length(indecies) < length(bounds)
+        push!(indecies, i)
     end
 
     for k in 1:length(bounds) + 1

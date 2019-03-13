@@ -19,7 +19,7 @@ max(t::Table) = t.entries[length(t.entries)].key[]
 function Base.get(t::Table{K, V}, key::K) where {K, V} 
     i = bsearch(t.entries, 1, t.size, convert(K, key))
     if i > 0
-        result = t.entries[i]
+        result = t.entries[i][]
         return isdeleted(result) ? nothing : result.val
     end
     return nothing

@@ -24,9 +24,9 @@ end
 
 # Binary search
 function Base.get(b::Buffer{K, V}, key) where {K, V}
-    i = bsearch(b.entries, 1, b.size, convert(K, key))
+    i = bsearch(b.entries, 1, length(b.entries), convert(K, key))
     if i > 0
-        result = b.entries[i]
+        result = b.entries[i][]
         return isdeleted(result) ? nothing : result.val
     end
     return nothing
