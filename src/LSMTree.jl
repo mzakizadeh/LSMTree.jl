@@ -31,8 +31,8 @@ include("bloom_filter.jl")
 include("table.jl")
 include("buffer.jl")
 include("level.jl")
-include("leveled_tree.jl")
+include("store.jl")
 
-export LeveledTree, insert!, get, delete!
+export Store, insert!, get, delete!, iter_init, iter_next
 
 end

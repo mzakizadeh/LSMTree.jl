@@ -3,7 +3,7 @@ module TestLSMTree
 using LSMTree
 using Test
 
-t = LeveledTree{Int64, Int64}(2, 2)
+t = Store{Int64, Int64}(2, 2)
 insert!(t, 1, 1) 
 insert!(t, 2, 2) 
 insert!(t, 3, 3)
