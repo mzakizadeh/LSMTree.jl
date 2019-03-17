@@ -1,5 +1,4 @@
 module LSMTree
-
 using Blobs
 
 function bsearch(bv::Vector, l::Integer, r::Integer, k::K) where K

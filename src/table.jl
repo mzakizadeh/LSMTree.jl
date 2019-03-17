@@ -25,17 +25,27 @@ function Base.get(t::Table{K, V}, key::K) where {K, V}
     return nothing
 end
 
-function Base.merge(t::Table{K, V}, v::Vector{Blob{Entry{K, V}}}) where {K, V}
+function Base.merge(t::Table{K, V}, v::Vector{Blob{Entry{K, V}}}, force_remove=false) where {K, V}
     length(t) == 0 && return Table{K, V}(v)
     # res_index, res_entries = Vector{Index{K}}(), Vector{Blob{Entry{K, V}}}()
     res_entries = Vector{Blob{Entry{K, V}}}()
     i, j = 1, 1
     while i <= length(t) && j <= length(v)
-        if t.entries[i][] < v[j][]
-            push!(res_entries, t.entries[i])
+        if isequal(t.entries[i][], v[j][])
+            if !force_remove || !v[j].deleted[]
+                push!(res_entries, v[j])
+            end
+            i += 1
+            j += 1
+        elseif t.entries[i][] < v[j][]
+            if !force_remove || !t.entries[i].deleted[] 
+                push!(res_entries, t.entries[i])
+            end
             i += 1
         else
-            push!(res_entries, v[j])
+            if !force_remove || !v[j].deleted[] 
+                push!(res_entries, v[j])
+            end
             j += 1
         end
     end

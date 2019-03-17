@@ -6,20 +6,27 @@ end
 
 # calling empty! function on vector of blobs removed blobs itself
 Base.empty!(b::Buffer{K, V}) where {K, V} = b.entries = Vector{Blob{Entry{K, V}}}()
-isfull(b::Buffer) = length(b.entries) == b.max_size
+isfull(b::Buffer) = sizeof(b.entries) >= b.max_size
 
 # Insertion sort
+# TODO: Check for duplicates
 function Base.put!(b::Buffer{K, V}, key, val, deleted=false) where {K, V}
-    e = Blobs.malloc_and_init(Entry{K, V})
-    e.key[], e.val[], e.deleted[] = key, val, deleted
-    push!(b.entries, e)
-    i = length(b.entries) - 1
-    while i > 0 && isless(e[], b.entries[i][])
-        b.entries[i + 1] = b.entries[i]
-        b.entries[i] = e
-        i -= 1
+    i = bsearch(b.entries, 1, length(b.entries), convert(K, key))
+    if i > 0
+        e = b.entries[i]
+        e.key[], e.val[], e.deleted[] = key, val, deleted
+    else
+        e = Blobs.malloc_and_init(Entry{K, V})
+        e.key[], e.val[], e.deleted[] = key, val, deleted
+        push!(b.entries, e)
+        i = length(b.entries) - 1
+        while i > 0 && isless(e[], b.entries[i][])
+            b.entries[i + 1] = b.entries[i]
+            b.entries[i] = e
+            i -= 1
+        end
+        b.entries[i + 1] = e
     end
-    b.entries[i + 1] = e
 end
 
 # Binary search

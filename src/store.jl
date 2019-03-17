@@ -2,9 +2,11 @@ mutable struct Store{K, V}
     buffer::Buffer{K, V}
     levels::Vector{Level}
     fanout::Integer
-    function Store{K, V}(buffer_max_entries::Integer, fanout::Integer) where {K, V}
+    first_level_max_size::Integer
+    table_threshold_size::Integer
+    function Store{K, V}(buffer_max_size::Integer=4000000, first_level_max_size::Integer=10000000, fanout::Integer=4, table_threshold_size::Integer=2000000) where {K, V}
         @assert isbitstype(K) && isbitstype(V) "must be isbitstype"
-        new{K, V}(Buffer{K, V}(buffer_max_entries), Vector{Level}(), fanout)
+        new{K, V}(Buffer{K, V}(buffer_max_size), Vector{Level}(), fanout, first_level_max_size, table_threshold_size)
     end
 end
 
@@ -24,18 +26,23 @@ struct IterState
     IterState(s::Store) = new(ones(Integer, length(s.levels)), ones(Integer, length(s.levels)), falses(length(s.levels)))
 end
 
-function Base.put!(s::Store, key, val)
-    put!(s.buffer, key, val)
+function Base.put!(s::Store, key, val, deleted=false)
+    put!(s.buffer, key, val, deleted)
     if isfull(s.buffer)
         compact!(s)
-        s.levels[1].size += length(s.buffer.entries)
-        merge!(s.levels[1], partition_with_bounds(s.levels[1].bounds, s.buffer.entries))
+        s.levels[1].size = merge!(s.levels[1], partition_with_bounds(s.levels[1].bounds, s.buffer.entries))
         empty!(s.buffer)
     end
 end
 
-Base.delete!(s::Store, key) = push!(s.buffer, key, missing)
 Base.eltype(s::Store{K, V}) where {K, V} = Tuple{K, V}
+
+# delete without first getting the value
+function Base.delete!(s::Store, key)
+    val = get(s, key)
+    @assert val != nothing "Can not delete a value that didn't inserted before"
+    put!(s, key, get(s, key), true)
+end
 
 function Base.length(s::Store)
     result = 0
@@ -47,10 +54,13 @@ end
 
 # TODO: remove deleted blobs
 function compact!(s::Store{K, V}) where {K, V}
+    length(s.levels) > 0 && !isfull(s.levels[1]) && return
     next, current = missing, missing
+    force_remove = false
     i = 1
     while i < length(s.levels)
         if !isfull(s.levels[i + 1])
+            force_remove = i + 1 == length(s.levels) ? true : false
             current = s.levels[i]
             next = s.levels[i + 1]
             break
@@ -65,7 +75,7 @@ function compact!(s::Store{K, V}) where {K, V}
         next = s.levels[length(s.levels)]
     end
     for table in current.tables
-        compact!(next, table)
+        compact!(next, table, force_remove)
     end
     empty!(current)
     while i > 1 
@@ -85,7 +95,7 @@ function Base.get(s::Store{K, V}, key) where {K, V}
         val = get(l, key)
         if val != nothing return val end
     end
-    print("not found")
+    return nothing
 end
 
 iter_init(s::Store) = IterState(s)
@@ -110,7 +120,7 @@ function iter_next(s::Store{K,V}, state::IterState)::Tuple{Bool, Pair{K,V}} wher
     if state.entries_pointer[level_index] > length(s.levels[level_index].tables[table_index])
         state.entries_pointer[level_index] = 1
         state.tables_pointer[level_index] += 1
-        state.tables_pointer[level_index] > length(s.levels[level_index].tables) ? state.done[level_index] = true : nothing
+        state.done[level_index] = state.tables_pointer[level_index] > length(s.levels[level_index].tables) ? true : false
     end
     e = s.levels[level_index].tables[table_index].entries[entry_index][]
     return (done(s, state), Pair(e.key, e.val))
