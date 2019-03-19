@@ -4,7 +4,7 @@ mutable struct Store{K, V}
     fanout::Integer
     first_level_max_size::Integer
     table_threshold_size::Integer
-    function Store{K, V}(buffer_max_size::Integer=4000000, first_level_max_size::Integer=10000000, fanout::Integer=4, table_threshold_size::Integer=2000000) where {K, V}
+    function Store{K, V}(buffer_max_size::Integer=4000000, first_level_max_size::Integer=10000000, fanout::Integer=10, table_threshold_size::Integer=2000000) where {K, V}
         @assert isbitstype(K) && isbitstype(V) "must be isbitstype"
         new{K, V}(Buffer{K, V}(buffer_max_size), Vector{Level}(), fanout, first_level_max_size, table_threshold_size)
     end
@@ -30,7 +30,7 @@ function Base.put!(s::Store, key, val, deleted=false)
     put!(s.buffer, key, val, deleted)
     if isfull(s.buffer)
         compact!(s)
-        s.levels[1].size = merge!(s.levels[1], partition_with_bounds(s.levels[1].bounds, s.buffer.entries))
+        merge!(s.levels[1], partition_with_bounds(s.levels[1].bounds, s.buffer.entries))
         empty!(s.buffer)
     end
 end
@@ -52,7 +52,6 @@ function Base.length(s::Store)
     return result
 end
 
-# TODO: remove deleted blobs
 function compact!(s::Store{K, V}) where {K, V}
     length(s.levels) > 0 && !isfull(s.levels[1]) && return
     next, current = missing, missing
@@ -68,9 +67,9 @@ function compact!(s::Store{K, V}) where {K, V}
         i += 1
     end
     if ismissing(next)
-        newsize = length(s.levels) != 0 ? s.levels[length(s.levels)].max_size * s.fanout : s.buffer.max_size * s.fanout
-        push!(s.levels, Level{K, V}(length(s.levels) + 1, newsize))
-        if length(s.levels) == 1 return end
+        newsize = s.first_level_max_size * s.fanout ^ length(s.levels)
+        push!(s.levels, Level{K, V}(length(s.levels) + 1, newsize, s.table_threshold_size))
+        length(s.levels) == 1 && return
         current = s.levels[length(s.levels) - 1]
         next = s.levels[length(s.levels)]
     end
@@ -131,4 +130,22 @@ function done(s::Store, state::IterState)
         !state.done[i] && return false
     end
     return true
+end
+
+function Base.dump(s::Store)
+    print("b\t")
+    for e in s.buffer.entries
+        print(e.key[], " ")
+    end
+    print('\n')
+    for l in s.levels
+        print("l$(l.depth)\t")
+        for t in l.tables
+            for e in t.entries
+                print(e.key[], " ")
+            end
+            print("    ")
+        end
+        print("\n")
+    end
 end

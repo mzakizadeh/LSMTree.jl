@@ -23,8 +23,15 @@ struct Entry{K, V}
 end
 
 isdeleted(e::Entry) = e.deleted
+Base.sizeof(e::Blob{Entry{K, V}}) where {K, V} = sizeof(K) + sizeof(V)
 Base.isless(e1::Entry, e2::Entry) = e1.key < e2.key
 Base.isequal(e1::Entry, e2::Entry) = e1.key == e2.key
+
+function Base.sizeof(v::Vector{Blob{Entry{K, V}}}) where {K, V}
+    size = 0
+    for i in v size += Blobs.sizeof(i) end
+    size
+end
 
 include("bloom_filter.jl")
 include("table.jl")

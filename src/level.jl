@@ -4,13 +4,13 @@ mutable struct Level{K, V}
     max_size::Integer
     tables::Vector{Table{K, V}}
     table_threshold_size::Integer
+    bounds::Vector{K}
     # bf::BloomFilter
     # min::K
     # max::K
-    bounds::Vector{K}
     function Level{K, V}(depth::Integer, max_size::Integer, table_threshold::Integer) where {K, V}
         tables = Vector{Table{K, V}}()
-        push!(tables, Table{K, V}(Vector{Blob{Entry{K, V}}}()))
+        push!(tables, Table{K, V}(Vector{Blob{Entry{K, V}}}(), 0))
         bounds = Vector{K}()
         # bf = BloomFilter{K}(convert(Int, max_size * 0.5))
         new{K, V}(depth, 0, max_size, tables, table_threshold, bounds)
@@ -19,10 +19,17 @@ end
 
 isfull(l::Level) = l.size >= l.max_size
 
-function Base.empty!(l::Level{K, V}) where {K, V}
-    empty!(l.tables)
-    push!(l.tables, Table{K, V}(Vector{Blob{Entry{K, V}}}()))
+function Base.empty!(l::Level{K, V}) where {K, V} 
+    l.tables = Vector{Table{K, V}}()
+    push!(l.tables, Table{K, V}(Vector{Blob{Entry{K, V}}}(), 0))
+    l.bounds = Vector{K}()
     l.size = 0
+end
+
+function Base.length(l::Level)
+    len = 0
+    for t in l.tables len += length(t) end
+    len
 end
 
 function Base.get(l::Level{K, V}, key::K) where {K, V} 
@@ -34,16 +41,15 @@ function Base.get(l::Level{K, V}, key::K) where {K, V}
 end
 
 function compact!(l::Level{K, V}, t::Table{K, V}, force_remove=false) where {K, V} 
-    l.size = merge!(l, partition_with_bounds(l.bounds, t.entries))
+    merge!(l, partition_with_bounds(l.bounds, t.entries))
 end
 
 function merge!(l::Level, parts::Vector, force_remove=false)
-    size = 0
     for i in 1:length(l.tables)
         if length(parts[i]) != 0
             table = merge(l.tables[i], parts[i])
-            size += length(table)
-            if sizeof(table) > l.table_threshold
+            l.size += table.size - l.tables[i].size
+            if table.size > l.table_threshold_size
                 (p1, p2) = split(table)
                 deleteat!(l.tables, i)
                 insert!(l.tables, i, p2)
@@ -52,9 +58,8 @@ function merge!(l::Level, parts::Vector, force_remove=false)
             else 
                 l.tables[i] = table 
             end
-        else size += length(l.tables[i]) end
+        end
     end
-    return size
 end
 
 function partition_with_bounds(bounds::Vector, entries::Vector)
