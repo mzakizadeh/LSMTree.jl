@@ -26,11 +26,14 @@ struct IterState
     IterState(s::Store) = new(ones(Integer, length(s.levels)), ones(Integer, length(s.levels)), falses(length(s.levels)))
 end
 
-function Base.put!(s::Store, key, val, deleted=false)
+function Base.put!(s::Store{K, V}, key, val, deleted=false) where {K, V}
+    key = convert(K, key)
+    val = convert(V, val)
     put!(s.buffer, key, val, deleted)
     if isfull(s.buffer)
         compact!(s)
-        merge!(s.levels[1], partition_with_bounds(s.levels[1].bounds, s.buffer.entries))
+        partitions = partition_with_bounds(s.levels[1].bounds, s.buffer.entries)
+        merge!(s.levels[1], partitions)
         empty!(s.buffer)
     end
 end
@@ -45,11 +48,9 @@ function Base.delete!(s::Store, key)
 end
 
 function Base.length(s::Store)
-    result = 0
-    for l in s.levels
-        result += l.size
-    end
-    return result
+    len = length(s.buffer.entries)
+    for l in s.levels len += length(l) end
+    len
 end
 
 function compact!(s::Store{K, V}) where {K, V}
@@ -119,7 +120,7 @@ function iter_next(s::Store{K,V}, state::IterState)::Tuple{Bool, Pair{K,V}} wher
     if state.entries_pointer[level_index] > length(s.levels[level_index].tables[table_index])
         state.entries_pointer[level_index] = 1
         state.tables_pointer[level_index] += 1
-        state.done[level_index] = state.tables_pointer[level_index] > length(s.levels[level_index].tables) ? true : false
+        state.done[level_index] = state.tables_pointer[level_index] > length(s.levels[level_index].tables)
     end
     e = s.levels[level_index].tables[table_index].entries[entry_index][]
     return (done(s, state), Pair(e.key, e.val))
@@ -132,20 +133,31 @@ function done(s::Store, state::IterState)
     return true
 end
 
+function seek_lub_search(s::Store{K, V}, hint_state::IterState, search_key) where {K, V}
+    k = convert(K, search_key)
+    ls = s.levels
+    for i in 1:length(ls)
+        table_index = key_table_index(ls[i], k)
+        table = ls[i].tables[table_index]
+        hint_state.tables_pointer[i] = table_index
+        hint_state.entries_pointer[i] = lub(table.entries, 1, length(table), k)
+    end
+end
+
 function Base.dump(s::Store)
     print("b\t")
     for e in s.buffer.entries
         print(e.key[], " ")
     end
-    print('\n')
+    print("\n\n")
     for l in s.levels
         print("l$(l.depth)\t")
         for t in l.tables
             for e in t.entries
                 print(e.key[], " ")
             end
-            print("    ")
+            print("\n\t")
         end
-        print("\n")
+        print("\n\n")
     end
 end

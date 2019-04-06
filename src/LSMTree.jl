@@ -1,18 +1,32 @@
 module LSMTree
 using Blobs
 
-function bsearch(bv::Vector, l::Integer, r::Integer, k::K) where K
+function bsearch(v::Vector, l::Integer, r::Integer, k::K) where K
     while l <= r
         mid = floor(Int, l + (r - l) / 2)
-        if bv[mid].key[] == k
+        if v[mid].key[] == k
             return mid
-        elseif bv[mid].key[] < k 
+        elseif v[mid].key[] < k 
             l = mid + 1
         else
             r = mid - 1
         end
     end
     return 0
+end
+
+function lub(v::Vector, lo::Integer, hi::Integer, k::K) where K
+    p = i -> k < v[i][].key
+    while lo < hi
+        mid::Integer = floor(lo + (hi-lo) / 2)
+        if p(mid)
+            hi = mid
+        else
+            lo = mid + 1
+        end
+    end
+    !p(lo) && return length(v)
+    lo
 end
 
 struct Entry{K, V}
@@ -39,6 +53,6 @@ include("buffer.jl")
 include("level.jl")
 include("store.jl")
 
-export Store, insert!, get, delete!, iter_init, iter_next
+export Store, insert!, get, delete!, iter_init, iter_next, seek_lub_search
 
 end

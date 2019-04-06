@@ -111,24 +111,46 @@ put!(s12, 1, 1)
 put!(s12, 2, 2)
 put!(s12, 3, 3)
 delete!(s12, 1)
-@test s11.levels[1].size == 3 * 16
+@test s12.levels[1].size == 3 * 16
 @test get(s12, 1) == nothing
 
 # iteration
-s13 = Store{Int128, Int128}(400000, 1000000, 4, 100000)
+s13 = Store{Int32, Int32}(400, 1000, 4, 100)
+for i in 1:100
+    x = rand(Int32)
+    put!(s13, x, i)
+end
+state = iter_init(s13)
+@test length(s13) == 100
+done, p = iter_next(s13, state)
+last = p
+while true
+    done, p = iter_next(s13, state)
+    @test last < p
+    global last = p
+    done && break
+end
+
+# seek_lub
+s14 = Store{Int128, Int128}(40000, 100000, 400, 10000)
 ints = []
 for i in 1:100000
     x = rand(Int128)
     # x = i
     push!(ints, x)
-    put!(s13, x, i)
+    put!(s14, x, i)
 end
+@test length(s14) == 100000
 sort!(ints)
-state = iter_init(s13)
-for i in 1:100000
-    done, p = iter_next(s13, state)
-    @test ints[i] == p[1]
-    # @test i == 100000 && done
+state = iter_init(s14)
+seek_lub_search(s14, state, ints[50000])
+done, p = iter_next(s14, state)
+last = p
+while true
+    done, p = iter_next(s14, state)
+    @test last < p
+    global last = p
+    done && break
 end
 
 end
