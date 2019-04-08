@@ -53,6 +53,16 @@ include("buffer.jl")
 include("level.jl")
 include("store.jl")
 
-export Store, insert!, get, delete!, iter_init, iter_next, seek_lub_search
+export BaseStore, 
+    Store, 
+    ImmutableStore, 
+    get, 
+    put,
+    put!,
+    delete, 
+    delete!,
+    iter_init, 
+    iter_next, 
+    seek_lub_search
 
 end

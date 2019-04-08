@@ -122,10 +122,10 @@ for i in 1:100
 end
 state = iter_init(s13)
 @test length(s13) == 100
-done, p = iter_next(s13, state)
+done, p = iter_next(state)
 last = p
 while true
-    done, p = iter_next(s13, state)
+    done, p = iter_next(state)
     @test last < p
     global last = p
     done && break
@@ -143,11 +143,11 @@ end
 @test length(s14) == 100000
 sort!(ints)
 state = iter_init(s14)
-seek_lub_search(s14, state, ints[50000])
-done, p = iter_next(s14, state)
+seek_lub_search(state, ints[50000])
+done, p = iter_next(state)
 last = p
 while true
-    done, p = iter_next(s14, state)
+    done, p = iter_next(state)
     @test last < p
     global last = p
     done && break

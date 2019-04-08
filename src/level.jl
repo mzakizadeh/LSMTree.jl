@@ -40,7 +40,7 @@ function Base.get(l::Level{K, V}, key::K) where {K, V}
     # else return nothing end
 end
 
-function compact!(l::Level{K, V}, t::Table{K, V}, force_remove=false) where {K, V} 
+function compact(l::Level{K, V}, t::Table{K, V}, force_remove=false) where {K, V} 
     merge!(l, partition_with_bounds(l.bounds, t.entries))
 end
 

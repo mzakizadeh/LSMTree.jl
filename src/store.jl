@@ -1,4 +1,6 @@
-mutable struct Store{K, V}
+abstract type BaseStore{K, V} end
+
+mutable struct Store{K, V} <: BaseStore{K, V}
     buffer::Buffer{K, V}
     levels::Vector{Level}
     fanout::Integer
@@ -10,20 +12,34 @@ mutable struct Store{K, V}
     end
 end
 
-struct ImmutableStore{K, V}
+struct ImmutableStore{K, V} <: BaseStore{K, V}
     buffer::Buffer{K, V}
     levels::Vector{Level}
     fanout::Integer
-    function ImmutableStore(store::Store{K, V}) where {K, V}
-        new{K, V}() #TODO: ImmutableStore
+    first_level_max_size::Integer
+    table_threshold_size::Integer
+    function ImmutableStore{K, V}(s::Store{K, V}) where {K, V}
+        return new{K, V}(deepcopy(s.buffer), deepcopy(s.levels), s.fanout, s.first_level_max_size, s.table_threshold_size)
     end
 end
 
-struct IterState
-    tables_pointer::Vector{Integer}
-    entries_pointer::Vector{Integer}
-    done::Vector{Bool}
-    IterState(s::Store) = new(ones(Integer, length(s.levels)), ones(Integer, length(s.levels)), falses(length(s.levels)))
+Base.eltype(s::BaseStore{K, V}) where {K, V} = Tuple{K, V}
+
+function Base.length(s::BaseStore)
+    len = length(s.buffer.entries)
+    for l in s.levels len += length(l) end
+    len
+end
+
+function Base.get(s::Store{K, V}, key) where {K, V}
+    key = convert(K, key) 
+    val = get(s.buffer, key)
+    if val != nothing return val end
+    for l in s.levels
+        val = get(l, key)
+        if val != nothing return val end
+    end
+    return nothing
 end
 
 function Base.put!(s::Store{K, V}, key, val, deleted=false) where {K, V}
@@ -31,29 +47,41 @@ function Base.put!(s::Store{K, V}, key, val, deleted=false) where {K, V}
     val = convert(V, val)
     put!(s.buffer, key, val, deleted)
     if isfull(s.buffer)
-        compact!(s)
+        compact(s)
         partitions = partition_with_bounds(s.levels[1].bounds, s.buffer.entries)
         merge!(s.levels[1], partitions)
         empty!(s.buffer)
     end
 end
 
-Base.eltype(s::Store{K, V}) where {K, V} = Tuple{K, V}
+function put(s::BaseStore{K, V}, key, val, deleted=false) where {K, V}
+    key = convert(K, key)
+    val = convert(V, val)
+    store = ImmutableStore(s)
+    put!(store.buffer, key, val)
+    if isfull(store.buffer)
+        compact(store)
+        partitions = partition_with_bounds(store.levels[1].bounds, store.buffer.entries)
+        merge!(store.levels[1], partitions)
+        empty!(store.buffer)
+    end
+end
 
 # delete without first getting the value
 function Base.delete!(s::Store, key)
     val = get(s, key)
     @assert val != nothing "Can not delete a value that didn't inserted before"
-    put!(s, key, get(s, key), true)
+    put!(s, key, val, true)
 end
 
-function Base.length(s::Store)
-    len = length(s.buffer.entries)
-    for l in s.levels len += length(l) end
-    len
+function delete(s::BaseStore, key)
+    store = ImmutableStore(s)
+    val = get(store, key)
+    @assert val != nothing "Can not delete a value that didn't inserted before"
+    put!(store, key, val, true)
 end
 
-function compact!(s::Store{K, V}) where {K, V}
+function compact(s::BaseStore{K, V}) where {K, V}
     length(s.levels) > 0 && !isfull(s.levels[1]) && return
     next, current = missing, missing
     force_remove = false
@@ -75,32 +103,38 @@ function compact!(s::Store{K, V}) where {K, V}
         next = s.levels[length(s.levels)]
     end
     for table in current.tables
-        compact!(next, table, force_remove)
+        compact(next, table, force_remove)
     end
     empty!(current)
     while i > 1 
         for table in s.levels[i - 1].tables
-            compact!(s.levels[i], table)
+            compact(s.levels[i], table)
         end
         empty!(s.levels[i - 1])
         i -= 1 
     end
 end
 
-function Base.get(s::Store{K, V}, key) where {K, V}
-    key = convert(K, key) 
-    val = get(s.buffer, key)
-    if val != nothing return val end
-    for l in s.levels
-        val = get(l, key)
-        if val != nothing return val end
+struct IterState{K, V}
+    store::ImmutableStore{K, V}
+    tables_pointer::Vector{Integer}
+    entries_pointer::Vector{Integer}
+    done::Vector{Bool}
+    function IterState{K, V}(s::BaseStore{K, V}) where {K, V}
+        store = s isa Store ? ImmutableStore{K, V}(s) : s
+        new(
+            store, 
+            ones(Integer, length(store.levels)), 
+            ones(Integer, length(store.levels)), 
+            falses(length(store.levels))
+        )
     end
-    return nothing
 end
 
-iter_init(s::Store) = IterState(s)
+iter_init(s::BaseStore{K, V}) where {K, V} = IterState{K, V}(s)
 
-function iter_next(s::Store{K,V}, state::IterState)::Tuple{Bool, Pair{K,V}} where {K,V}
+function iter_next(state::IterState{K, V})::Tuple{Bool, Pair{K,V}} where {K,V}
+    s = state.store
     level_index, table_index, entry_index = missing, missing, missing
     for i in 1:length(s.levels)
         if !state.done[i]
@@ -123,18 +157,20 @@ function iter_next(s::Store{K,V}, state::IterState)::Tuple{Bool, Pair{K,V}} wher
         state.done[level_index] = state.tables_pointer[level_index] > length(s.levels[level_index].tables)
     end
     e = s.levels[level_index].tables[table_index].entries[entry_index][]
-    return (done(s, state), Pair(e.key, e.val))
+    return (done(state), Pair(e.key, e.val))
 end
 
-function done(s::Store, state::IterState) 
+function done(state::IterState) 
+    s = state.store
     for i in 1:length(s.levels)
         !state.done[i] && return false
     end
     return true
 end
 
-function seek_lub_search(s::Store{K, V}, hint_state::IterState, search_key) where {K, V}
+function seek_lub_search(hint_state::IterState{K, V}, search_key) where {K, V}
     k = convert(K, search_key)
+    s = hint_state.store
     ls = s.levels
     for i in 1:length(ls)
         table_index = key_table_index(ls[i], k)
@@ -144,7 +180,7 @@ function seek_lub_search(s::Store{K, V}, hint_state::IterState, search_key) wher
     end
 end
 
-function Base.dump(s::Store)
+function Base.dump(s::BaseStore)
     print("b\t")
     for e in s.buffer.entries
         print(e.key[], " ")
