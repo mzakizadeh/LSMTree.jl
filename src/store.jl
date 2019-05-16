@@ -1,27 +1,27 @@
 abstract type BaseStore{K, V} end
 
-mutable struct Store{K, V} <: BaseStore{K, V}
-    buffer::Buffer{K, V}
-    levels::Vector{Level}
+struct Store{K, V}
+    levels_head::Blob{Level{K, V}}
     fanout::Integer
     first_level_max_size::Integer
     table_threshold_size::Integer
-    function Store{K, V}(buffer_max_size::Integer=4000000, first_level_max_size::Integer=10000000, fanout::Integer=10, table_threshold_size::Integer=2000000) where {K, V}
-        @assert isbitstype(K) && isbitstype(V) "must be isbitstype"
-        new{K, V}(Buffer{K, V}(buffer_max_size), Vector{Level}(), fanout, first_level_max_size, table_threshold_size)
+    function Store{K, V}(first_level_max_size::Integer=10000000, 
+                         fanout::Integer=10, 
+                         table_threshold_size::Integer=2000000) where {K, V}
+        @assert isbitstype(K) && isbitstype(V) "isbitstype K and V"
+        new{K, V}(nothing, fanout, first_level_max_size, table_threshold_size)
     end
 end
 
-struct ImmutableStore{K, V} <: BaseStore{K, V}
+mutable struct BufferStore{K, V} <: BaseStore{K, V}
     buffer::Buffer{K, V}
-    levels::Vector{Level}
-    fanout::Integer
-    first_level_max_size::Integer
-    table_threshold_size::Integer
-    function ImmutableStore{K, V}(s::Store{K, V}) where {K, V}
-        return new{K, V}(deepcopy(s.buffer), deepcopy(s.levels), s.fanout, s.first_level_max_size, s.table_threshold_size)
-    end
+    store::Blob{Store{K, V}}
+    BufferStore{K, V}(buffer_max_size::Integer=4000000, 
+                      store::Store{K, V}) where {K, V} = 
+        new{K, V}(Buffer(buffer_max_size), store)
 end
+
+# TODO: Update methods based on structures updates!
 
 Base.eltype(s::BaseStore{K, V}) where {K, V} = Tuple{K, V}
 

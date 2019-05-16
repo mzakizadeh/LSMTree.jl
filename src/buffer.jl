@@ -1,11 +1,11 @@
 mutable struct Buffer{K, V}
     size::Integer
     max_size::Integer
-    entries::Vector{Blob{Entry{K, V}}}
-    Buffer{K, V}(max_size::Integer) where {K, V} = new{K, V}(0, max_size, Vector{Blob{Entry{K, V}}}())
+    entries::Vector{Entry{K, V}}
+    Buffer{K, V}(max_size::Integer) where {K, V} = 
+        new{K, V}(0, max_size, Vector{Entry{K, V}}())
 end
 
-# calling empty! function on vector of blobs removed blobs itself
 isfull(b::Buffer) = b.size >= b.max_size
 
 function Base.empty!(b::Buffer{K, V}) where {K, V}

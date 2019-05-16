@@ -1,12 +1,6 @@
-# struct Index{K}
-#     key::K
-#     offset::Integer
-#     size::Integer
-# end
-
 struct Table{K, V}
-    # index::Vector{Index{K}}
-    entries::Vector{Blob{Entry{K, V}}}
+    name::Int64
+    entries::BlobVector{Blob{Entry{K, V}}}
     size::Int64
 end
 

@@ -1,30 +1,14 @@
 mutable struct Level{K, V}
-    depth::Integer
     size::Integer
     max_size::Integer
-    tables::Vector{Table{K, V}}
     table_threshold_size::Integer
-    bounds::Vector{K}
-    # bf::BloomFilter
-    # min::K
-    # max::K
-    function Level{K, V}(depth::Integer, max_size::Integer, table_threshold::Integer) where {K, V}
-        tables = Vector{Table{K, V}}()
-        push!(tables, Table{K, V}(Vector{Blob{Entry{K, V}}}(), 0))
-        bounds = Vector{K}()
-        # bf = BloomFilter{K}(convert(Int, max_size * 0.5))
-        new{K, V}(depth, 0, max_size, tables, table_threshold, bounds)
-    end
+    bounds::BlobVector{K}
+    tables::BlobVector{Table{K, V}}
+    next_level::Level{K, V}
+    prev_level::Level{K, V}
 end
 
 isfull(l::Level) = l.size >= l.max_size
-
-function Base.empty!(l::Level{K, V}) where {K, V} 
-    l.tables = Vector{Table{K, V}}()
-    push!(l.tables, Table{K, V}(Vector{Blob{Entry{K, V}}}(), 0))
-    l.bounds = Vector{K}()
-    l.size = 0
-end
 
 function Base.length(l::Level)
     len = 0
