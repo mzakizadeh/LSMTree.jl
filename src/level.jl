@@ -1,4 +1,5 @@
-mutable struct Level{K, V}
+struct Level{K, V}
+    id::Int64
     size::Integer
     max_size::Integer
     table_threshold_size::Integer

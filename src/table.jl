@@ -1,7 +1,7 @@
 struct Table{K, V}
-    name::Int64
+    id::Int64
     entries::BlobVector{Blob{Entry{K, V}}}
-    size::Int64
+    size::Integer
 end
 
 Base.length(t::Table) = length(t.entries)
