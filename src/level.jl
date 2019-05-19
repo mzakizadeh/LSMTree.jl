@@ -10,6 +10,8 @@ struct Level{K, V}
 end
 
 isfull(l::Level) = l.size >= l.max_size
+notlast(l::Level) = !Base.isnothing(l.next_level)
+notfirst(l::Level) = !Base.isnothing(l.prev_level)
 
 function Base.length(l::Level)
     len = 0

@@ -1,14 +1,15 @@
 abstract type BaseStore{K, V} end
 
 struct Store{K, V}
-    levels_head::Blob{Level{K, V}}
+    node::Blob{Level{K, V}}
     fanout::Integer
     first_level_max_size::Integer
     table_threshold_size::Integer
     function Store{K, V}(first_level_max_size::Integer=10000000, 
                          fanout::Integer=10, 
                          table_threshold_size::Integer=2000000) where {K, V}
-        @assert isbitstype(K) && isbitstype(V) "isbitstype K and V"
+        @assert isbitstype(K) 
+        @assert isbitstype(V)
         new{K, V}(nothing, fanout, first_level_max_size, table_threshold_size)
     end
 end
@@ -25,21 +26,21 @@ end
 
 Base.eltype(s::BaseStore{K, V}) where {K, V} = Tuple{K, V}
 
-function Base.length(s::BaseStore)
+function Base.length(s::BufferStore)
     len = length(s.buffer.entries)
-    for l in s.levels len += length(l) end
+    for l in s.store.levels len += length(l) end
     len
 end
 
-function Base.get(s::Store{K, V}, key) where {K, V}
+function Base.get(s::BufferStore{K, V}, key) where {K, V}
     key = convert(K, key) 
     val = get(s.buffer, key)
-    if val != nothing return val end
+    !Base.isnothing(val) && val
     for l in s.levels
         val = get(l, key)
-        if val != nothing return val end
+        !Base.isnothing(val) && val
     end
-    return nothing
+    nothing
 end
 
 function Base.put!(s::Store{K, V}, key, val, deleted=false) where {K, V}
@@ -48,56 +49,36 @@ function Base.put!(s::Store{K, V}, key, val, deleted=false) where {K, V}
     put!(s.buffer, key, val, deleted)
     if isfull(s.buffer)
         compact(s)
-        partitions = partition_with_bounds(s.levels[1].bounds, s.buffer.entries)
-        merge!(s.levels[1], partitions)
+        parts = partition_with_bounds(s.levels[1].bounds, s.buffer.entries)
+        merge!(s.levels[1], parts)
         empty!(s.buffer)
     end
 end
 
-function put(s::BaseStore{K, V}, key, val, deleted=false) where {K, V}
-    key = convert(K, key)
-    val = convert(V, val)
-    store = ImmutableStore(s)
-    put!(store.buffer, key, val)
-    if isfull(store.buffer)
-        compact(store)
-        partitions = partition_with_bounds(store.levels[1].bounds, store.buffer.entries)
-        merge!(store.levels[1], partitions)
-        empty!(store.buffer)
-    end
-end
-
-# delete without first getting the value
+# TODO delete key without getting the value
 function Base.delete!(s::Store, key)
     val = get(s, key)
-    @assert val != nothing "Can not delete a value that didn't inserted before"
+    @assert !Base.isnothing(val)
     put!(s, key, val, true)
 end
 
-function delete(s::BaseStore, key)
-    store = ImmutableStore(s)
-    val = get(store, key)
-    @assert val != nothing "Can not delete a value that didn't inserted before"
-    put!(store, key, val, true)
-end
-
 function compact(s::BaseStore{K, V}) where {K, V}
-    length(s.levels) > 0 && !isfull(s.levels[1]) && return
-    next, current = missing, missing
-    force_remove = false
-    i = 1
-    while i < length(s.levels)
-        if !isfull(s.levels[i + 1])
-            force_remove = i + 1 == length(s.levels) ? true : false
-            current = s.levels[i]
-            next = s.levels[i + 1]
+    # Return if first level has enough empty space
+    !Base.isnothing(s.store.levels_head) && !isfull(s.store.levels_head[]) && return
+    # Find first level that has enough empty space
+    current, next, force_remove = s.store.levels_head[], current.next_level[], false
+    while notlast(next.next_level)
+        if !isfull(next)
+            force_remove = Base.isnothing(next.next_level)
             break
         end
-        i += 1
+        current, next = current.next_level, next.next_level
     end
-    if ismissing(next)
-        newsize = s.first_level_max_size * s.fanout ^ length(s.levels)
-        push!(s.levels, Level{K, V}(length(s.levels) + 1, newsize, s.table_threshold_size))
+    # Create new level if we didn't find enough space in tree
+    if isfull(next)
+        last_level = next
+        new_level = missing # TODO create new level
+        last_level.next_level = new_level
         length(s.levels) == 1 && return
         current = s.levels[length(s.levels) - 1]
         next = s.levels[length(s.levels)]
@@ -106,12 +87,13 @@ function compact(s::BaseStore{K, V}) where {K, V}
         compact(next, table, force_remove)
     end
     empty!(current)
-    while i > 1 
-        for table in s.levels[i - 1].tables
-            compact(s.levels[i], table)
+    while notfirst(current)
+        current = current.prev_level
+        next = next.prev_level
+        for table in current.tables
+            compact(next, table)
         end
-        empty!(s.levels[i - 1])
-        i -= 1 
+        empty!(current)
     end
 end
 

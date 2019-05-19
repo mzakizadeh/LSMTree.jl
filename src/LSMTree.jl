@@ -33,7 +33,6 @@ struct Entry{K, V}
     key::K
     val::V
     deleted::Bool
-    Entry{K, V}(k, v, deleted=false) where {K, V} = new{K, V}(k, v, deleted)
 end
 
 isdeleted(e::Entry) = e.deleted
@@ -55,14 +54,11 @@ include("store.jl")
 
 export BaseStore, 
     Store, 
-    ImmutableStore, 
     get, 
-    put,
     put!,
-    delete, 
     delete!,
     iter_init, 
     iter_next, 
     seek_lub_search
-
+    
 end
