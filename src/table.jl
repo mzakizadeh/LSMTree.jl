@@ -4,7 +4,7 @@ struct Table{K, V}
     entries::BlobVector{Entry{K, V}}
 end
 
-inmemory_tables = Dict{Int64, Table}()
+inmemory_tables = Dict{Int64, Blob{Table}}()
 
 Base.length(t::Table) = length(t.entries)
 min(t::Table) = t.entries[1].key[]
@@ -21,7 +21,9 @@ function Blobs.child_size(::Type{Table{K, V}}, capacity::Int) where {K, V}
     Blobs.child_size(fieldtype(T, :entries), capacity)
 end
 
-function Blobs.init(l::Blob{Table{K, V}}, free::Blob{Nothing}, capacity::Int) where {K,V}
+function Blobs.init(l::Blob{Table{K, V}}, 
+                    free::Blob{Nothing}, 
+                    capacity::Int) where {K, V}
     free = Blobs.init(l.entries, free, capacity)
     l.size[] = 0
     free
