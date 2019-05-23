@@ -29,16 +29,16 @@ Base.eltype(s::BaseStore{K, V}) where {K, V} = Tuple{K, V}
 function Base.length(s::BufferStore)
     len = length(s.buffer.entries)
     for l in s.store.levels len += length(l) end
-    len
+    return len
 end
 
 function Base.get(s::BufferStore{K, V}, key) where {K, V}
     key = convert(K, key) 
     val = get(s.buffer, key)
-    !Base.isnothing(val) && val
+    !Base.isnothing(val) && return val
     for l in s.levels
         val = get(l, key)
-        !Base.isnothing(val) && val
+        !Base.isnothing(val) && return val
     end
     nothing
 end
@@ -66,7 +66,8 @@ function compact(s::BaseStore{K, V}) where {K, V}
     # Return if first level has enough empty space
     !Base.isnothing(s.store.levels_head) && !isfull(s.store.levels_head[]) && return
     # Find first level that has enough empty space
-    current, next, force_remove = s.store.levels_head[], current.next_level[], false
+    current, next = s.store.levels_head[], current.next_level[]
+    force_remove = false
     while notlast(next.next_level)
         if !isfull(next)
             force_remove = Base.isnothing(next.next_level)
@@ -83,17 +84,14 @@ function compact(s::BaseStore{K, V}) where {K, V}
         current = s.levels[length(s.levels) - 1]
         next = s.levels[length(s.levels)]
     end
-    for table in current.tables
-        compact(next, table, force_remove)
-    end
-    empty!(current)
-    while notfirst(current)
-        current = current.prev_level
-        next = next.prev_level
+    # Compact levels and free up space
+    while notfirst(next) 
         for table in current.tables
-            compact(next, table)
+            compact(next, table, force_remove)
         end
         empty!(current)
+        current, next = current.prev_level[], next.prev_level[]
+        force_remove = false
     end
 end
 

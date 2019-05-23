@@ -1,12 +1,31 @@
 struct Table{K, V}
     id::Int64
-    entries::BlobVector{Blob{Entry{K, V}}}
-    size::Integer
+    size::Int64
+    entries::BlobVector{Entry{K, V}}
 end
+
+inmemory_tables = Dict{Int64, Table}()
 
 Base.length(t::Table) = length(t.entries)
 min(t::Table) = t.entries[1].key[]
 max(t::Table) = t.entries[length(t.entries)].key[]
+
+function table(id::Int64,
+               size::Int64) where {K, V}
+    t = Blobs.malloc_and_init(Table{K, V}, size)
+    return t
+end
+
+function Blobs.child_size(::Type{Table{K, V}}, capacity::Int) where {K, V}
+    T = Table{K, V}
+    Blobs.child_size(fieldtype(T, :entries), capacity)
+end
+
+function Blobs.init(l::Blob{Table{K, V}}, free::Blob{Nothing}, capacity::Int) where {K,V}
+    free = Blobs.init(l.entries, free, capacity)
+    l.size[] = 0
+    free
+end
 
 function Base.get(t::Table{K, V}, key::K) where {K, V} 
     i = bsearch(t.entries, 1, length(t), convert(K, key))

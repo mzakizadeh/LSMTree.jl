@@ -1,17 +1,42 @@
 struct Level{K, V}
     id::Int64
-    size::Integer
-    max_size::Integer
-    table_threshold_size::Integer
+    next_level::Int64
+    prev_level::Int64
+    size::Int64
+    max_size::Int64
+    table_threshold_size::Int64
     bounds::BlobVector{K}
-    tables::BlobVector{Table{K, V}}
-    next_level::Level{K, V}
-    prev_level::Level{K, V}
+    tables::BlobVector{Int64}
 end
 
+inmemory_levels = Dict{Int64, Level}()
+
 isfull(l::Level) = l.size >= l.max_size
-notlast(l::Level) = !Base.isnothing(l.next_level)
-notfirst(l::Level) = !Base.isnothing(l.prev_level)
+notlast(l::Level) = l.next_level > 0
+notfirst(l::Level) = l.next_level > 0
+
+function level(id::Int64,
+               max_size::Integer,
+               table_threshold_size::Integer) where {K, V}
+    l = Blobs.malloc_and_init(Level{K, V}, max_size / sizeof(Entry{K, V}))
+    l.id[] = id
+    l.max_size[] = max_size
+    l.table_threshold_size[] = table_threshold_size
+    return l
+end
+
+function Blobs.child_size(::Type{Level{K, V}}, capacity::Int) where {K, V}
+    T = Level{K, V}
+    +(Blobs.child_size(fieldtype(T, :bounds), capacity),
+      Blobs.child_size(fieldtype(T, :tables), capacity + 1))
+end
+
+function Blobs.init(l::Blob{Level{K, V}}, free::Blob{Nothing}, capacity::Int) where {K,V}
+    free = Blobs.init(l.bounds, free, capacity)
+    free = Blobs.init(l.tables, free, capacity + 1)
+    l.size[] = 0
+    free
+end
 
 function Base.length(l::Level)
     len = 0
