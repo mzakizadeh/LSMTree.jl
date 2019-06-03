@@ -10,7 +10,7 @@ struct Store{K, V}
                          table_threshold_size::Integer=2000000) where {K, V}
         @assert isbitstype(K) 
         @assert isbitstype(V)
-        new{K, V}(nothing, fanout, first_level_max_size, table_threshold_size)
+        new{K, V}(-1, fanout, first_level_max_size, table_threshold_size)
     end
 end
 
@@ -50,7 +50,7 @@ function Base.put!(s::Store{K, V}, key, val, deleted=false) where {K, V}
     put!(s.buffer, key, val, deleted)
     if isfull(s.buffer)
         compact(s)
-        parts = partition_with_bounds(s.levels[1].bounds, s.buffer.entries)
+        parts = partition(s.levels[1].bounds, s.buffer.entries)
         merge!(s.levels[1], parts)
         empty!(s.buffer)
     end

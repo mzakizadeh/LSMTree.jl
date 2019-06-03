@@ -8,7 +8,8 @@ inmemory_tables = Dict{Int64, Blob{Table}}()
 
 Base.length(t::Table) = length(t.entries)
 min(t::Table) = t.entries[1].key[]
-max(t::Table) = t.entries[length(t.entries)].key[]
+max(t::Table) = t.entries[t.size].key[]
+new_tid() = reverse(sort(collect(keys(inmemory_levels)))) + 1
 
 function table(id::Int64,
                size::Int64) where {K, V}
@@ -38,54 +39,57 @@ function Base.get(t::Table{K, V}, key::K) where {K, V}
     return nothing
 end
 
-function Base.merge(t::Table{K, V}, v::Vector{Blob{Entry{K, V}}}, force_remove=false) where {K, V}
-    length(t) == 0 && return Table{K, V}(v, sizeof(v))
-    # res_index, res_entries = Vector{Index{K}}(), Vector{Blob{Entry{K, V}}}()
-    res_entries = Vector{Blob{Entry{K, V}}}()
-    size = 0
-    i, j = 1, 1
+function Base.merge(t::Table{K, V},
+                    v::BlobVector{Entry{K, V}},
+                    start_index::Int64,
+                    end_index::Int64,
+                    force_remove) where {K, V}
+    length(t) == 0 && return Table{K, V}(new_tid(), v, sizeof(v))
+    size = t.size[] + length(v[])
+    res_entries = Blobs.malloc_and_init(BlobVector{Entry{K, V}}, size)
+    i, j, size = 1, 1, 0
     while i <= length(t) && j <= length(v)
         if isequal(t.entries[i][], v[j][])
             if !force_remove || !v[j].deleted[]
-                push!(res_entries, v[j])
-                size += sizeof(v[j])
+                res_entries[i + j - 1] = v[j]
+                size += 1
             end
             i += 1
             j += 1
         elseif t.entries[i][] < v[j][]
             if !force_remove || !t.entries[i].deleted[] 
-                push!(res_entries, t.entries[i])
-                size += sizeof(t.entries[i])
+                res_entries[i + j - 1] = t.entries[j]
+                size += 1
             end
             i += 1
         else
             if !force_remove || !v[j].deleted[] 
-                push!(res_entries, v[j])
-                size += sizeof(v[j])
+                res_entries[i + j - 1] = v[j]
+                size += 1
             end
             j += 1
         end
     end
     while i <= length(t)
-        push!(res_entries, t.entries[i])
-        size += sizeof(t.entries[i])
+        res_entries[i + j - 1] = t.entries[j]
+        size += 1
         i += 1
     end
     while j <= length(v)
-        push!(res_entries, v[j])
-        size += sizeof(v[j])
+        res_entries[i + j - 1] = v[j]
+        size += 1
         j += 1
     end
-    return Table{K, V}(res_entries, size)
+    return Table{K, V}(size, res_entries, size)
 end
 
-# TODO: split based on size
 function split(t::Table{K, V}) where {K, V} 
-    len = length(t)
-    mid = floor(Int, len / 2)
-    p1_entries = t.entries[1:mid]
-    p1_size = sizeof(t.entries[1:mid])
-    p2_entries = t.entries[mid + 1:len]
-    p2_size = sizeof(t.entries[mid + 1:len])
-    return (Table{K, V}(p1_entries, p1_size), Table{K, V}(p2_entries, p2_size))
+    mid = floor(Int, t.size / 2)
+    p1_entries = Blobs.malloc_and_init(BlobVector{Entry{K, V}}, mid)
+    for i in 1:mid p1_entries[i] = t.entries[i] end
+    t1 = Table{K, V}(new_tid(), p1_entries, mid)
+    p2_entries = Blobs.malloc_and_init(BlobVector{Entry{K, V}}, t.size - mid)
+    for i in mid + 1:t.size p2_entries[i - mid] = t.entries[i] end
+    t2 = Table{K, V}(new_tid(), p2_entries, t.size - mid)
+    return (t1, t2)
 end
