@@ -85,13 +85,17 @@ function Base.merge(t::Blob{Table{K, V}},
     return Blobs.malloc_and_init(Table{K, V}, result_entries)
 end
 
-function split(t::Table{K, V}) where {K, V} 
-    mid = floor(Int, t.size / 2)
-    p1_entries = Blobs.malloc_and_init(BlobVector{Entry{K, V}}, mid)
-    for i in 1:mid p1_entries[i] = t.entries[i] end
-    t1 = Table{K, V}(new_tid(), p1_entries, mid)
-    p2_entries = Blobs.malloc_and_init(BlobVector{Entry{K, V}}, t.size - mid)
-    for i in mid + 1:t.size p2_entries[i - mid] = t.entries[i] end
-    t2 = Table{K, V}(new_tid(), p2_entries, t.size - mid)
+function split(t::Blob{Table{K, V}}) where {K, V} 
+    mid = floor(Int, t.size[] / 2)
+    t1_entries = Vector{Blob{Entry{K, V}}}()
+    t2_entries = Vector{Blob{Entry{K, V}}}()
+    for i in 1:mid 
+        push!(t1_entries, t.entries[i]) 
+    end
+    for i in mid + 1:t.size[]
+        push!(t2_entries, t.entries[i]) 
+    end
+    t1 = Blobs.malloc_and_init(Table{K, V}, t1_entries)
+    t2 = Blobs.malloc_and_init(Table{K, V}, t2_entries)
     return (t1, t2)
 end
