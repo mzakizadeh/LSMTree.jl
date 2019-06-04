@@ -6,27 +6,27 @@ end
 
 inmemory_tables = Dict{Int64, Blob{Table}}()
 
-Base.length(t::Table) = length(t.entries)
+Base.length(t::Table) = t.size[]
 min(t::Table) = t.entries[1].key[]
 max(t::Table) = t.entries[t.size].key[]
 new_tid() = reverse(sort(collect(keys(inmemory_levels)))) + 1
 
-function table(id::Int64,
-               size::Int64) where {K, V}
-    t = Blobs.malloc_and_init(Table{K, V}, size)
-    return t
-end
-
-function Blobs.child_size(::Type{Table{K, V}}, capacity::Int) where {K, V}
+function Blobs.child_size(::Type{Table{K, V}}, 
+                          entries::Vector{Blob{Entry{K, V}}}) where {K, V}
     T = Table{K, V}
-    Blobs.child_size(fieldtype(T, :entries), capacity)
+    Blobs.child_size(fieldtype(T, :entries), length(entries))
 end
 
 function Blobs.init(l::Blob{Table{K, V}}, 
                     free::Blob{Nothing}, 
-                    capacity::Int) where {K, V}
-    free = Blobs.init(l.entries, free, capacity)
-    l.size[] = 0
+                    entries::Vector{Blob{Entry{K, V}}}) where {K, V}
+    free = Blobs.init(l.entries, free, length(entries))
+    for i in 1:length(entries)
+        l.entries[i].key[] = entries[i].key
+        l.entries[i].val[] = entries[i].val
+        l.entries[i].deleted[] = entries[i].deleted
+    end
+    l.size[] = length(entries)
     free
 end
 
@@ -44,43 +44,45 @@ function Base.merge(t::Table{K, V},
                     start_index::Int64,
                     end_index::Int64,
                     force_remove) where {K, V}
-    length(t) == 0 && return Table{K, V}(new_tid(), v, sizeof(v))
-    size = t.size[] + length(v[])
-    res_entries = Blobs.malloc_and_init(BlobVector{Entry{K, V}}, size)
-    i, j, size = 1, 1, 0
-    while i <= length(t) && j <= length(v)
+    result_entries = Vector{Blob{Entry{K, V}}}()
+    if length(t) == 0 
+        for e in v push!(result_entries, e) end
+        return Blobs.malloc_and_init(Table{K, V}, result_entries)
+    end
+    i, j, size = 1, start_index, 0
+    while i <= length(t) && j <= end_index
         if isequal(t.entries[i][], v[j][])
             if !force_remove || !v[j].deleted[]
-                res_entries[i + j - 1] = v[j]
+                result_entries[i + j - 1] = v[j]
                 size += 1
             end
             i += 1
             j += 1
         elseif t.entries[i][] < v[j][]
             if !force_remove || !t.entries[i].deleted[] 
-                res_entries[i + j - 1] = t.entries[j]
+                result_entries[i + j - 1] = t.entries[j]
                 size += 1
             end
             i += 1
         else
             if !force_remove || !v[j].deleted[] 
-                res_entries[i + j - 1] = v[j]
+                result_entries[i + j - 1] = v[j]
                 size += 1
             end
             j += 1
         end
     end
     while i <= length(t)
-        res_entries[i + j - 1] = t.entries[j]
+        result_entries[i + j - 1] = t.entries[j]
         size += 1
         i += 1
     end
-    while j <= length(v)
-        res_entries[i + j - 1] = v[j]
+    while j <= end_index
+        result_entries[i + j - 1] = v[j]
         size += 1
         j += 1
     end
-    return Table{K, V}(size, res_entries, size)
+    return Blobs.malloc_and_init(Table{K, V}, result_entries)
 end
 
 function split(t::Table{K, V}) where {K, V} 
