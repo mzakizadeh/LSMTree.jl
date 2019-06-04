@@ -72,7 +72,7 @@ function merge!(l::Level{K, V},
     pushfirst!(indecies, 1)
     tables = l.tables[]
     for i in 1:length(l.tables)
-        if indecies[i + 1] - indecies [i] > 1
+        if indecies[i + 1] - indecies[i] > 1
             table = merge(l.tables[i + j], t, indecies[i], indecies[i + 1], force_remove)
             # l.size += table.size - l.tables[i + j].size
             if table.size > l.table_threshold_size

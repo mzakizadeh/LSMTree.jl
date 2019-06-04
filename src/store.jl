@@ -5,21 +5,14 @@ struct Store{K, V}
     fanout::Int64
     first_level_max_size::Int64
     table_threshold_size::Int64
-    function Store{K, V}(first_level_max_size::Integer=10000000, 
-                         fanout::Integer=10, 
-                         table_threshold_size::Integer=2000000) where {K, V}
-        @assert isbitstype(K) 
-        @assert isbitstype(V)
-        new{K, V}(-1, fanout, first_level_max_size, table_threshold_size)
-    end
 end
 
 mutable struct BufferStore{K, V} <: BaseStore{K, V}
     buffer::Buffer{K, V}
     store::Blob{Store{K, V}}
-    BufferStore{K, V}(buffer_max_size::Integer=4000000, 
-                      store::Store{K, V}) where {K, V} = 
-        new{K, V}(Buffer(buffer_max_size), store)
+    BufferStore{K, V}(store::Blob{Store{K, V}},
+                      buffer_max_size::Integer=1000) where {K, V} = 
+        new{K, V}(Buffer{K, V}(buffer_max_size), store)
 end
 
 # TODO: Update methods based on structures updates!
@@ -100,70 +93,70 @@ function compact(s::BaseStore{K, V}) where {K, V}
     end
 end
 
-struct IterState{K, V}
-    store::ImmutableStore{K, V}
-    tables_pointer::Vector{Integer}
-    entries_pointer::Vector{Integer}
-    done::Vector{Bool}
-    function IterState{K, V}(s::BaseStore{K, V}) where {K, V}
-        store = s isa Store ? ImmutableStore{K, V}(s) : s
-        new(
-            store, 
-            ones(Integer, length(store.levels)), 
-            ones(Integer, length(store.levels)), 
-            falses(length(store.levels))
-        )
-    end
-end
+# struct IterState{K, V}
+#     store::ImmutableStore{K, V}
+#     tables_pointer::Vector{Integer}
+#     entries_pointer::Vector{Integer}
+#     done::Vector{Bool}
+#     function IterState{K, V}(s::BaseStore{K, V}) where {K, V}
+#         store = s isa Store ? ImmutableStore{K, V}(s) : s
+#         new(
+#             store, 
+#             ones(Integer, length(store.levels)), 
+#             ones(Integer, length(store.levels)), 
+#             falses(length(store.levels))
+#         )
+#     end
+# end
 
-iter_init(s::BaseStore{K, V}) where {K, V} = IterState{K, V}(s)
+# iter_init(s::BaseStore{K, V}) where {K, V} = IterState{K, V}(s)
 
-function iter_next(state::IterState{K, V})::Tuple{Bool, Pair{K,V}} where {K,V}
-    s = state.store
-    level_index, table_index, entry_index = missing, missing, missing
-    for i in 1:length(s.levels)
-        if !state.done[i]
-            level_index, table_index, entry_index = i, state.tables_pointer[i], state.entries_pointer[i]
-            break
-        end
-    end
-    for i in (level_index + 1):length(s.levels)
-        if !state.done[i]
-            e = s.levels[i].tables[state.tables_pointer[i]].entries[state.entries_pointer[i]][]
-            if e < s.levels[level_index].tables[table_index].entries[entry_index][]
-                level_index, table_index, entry_index = i, state.tables_pointer[i], state.entries_pointer[i]
-            end
-        end
-    end
-    state.entries_pointer[level_index] += 1
-    if state.entries_pointer[level_index] > length(s.levels[level_index].tables[table_index])
-        state.entries_pointer[level_index] = 1
-        state.tables_pointer[level_index] += 1
-        state.done[level_index] = state.tables_pointer[level_index] > length(s.levels[level_index].tables)
-    end
-    e = s.levels[level_index].tables[table_index].entries[entry_index][]
-    return (done(state), Pair(e.key, e.val))
-end
+# function iter_next(state::IterState{K, V})::Tuple{Bool, Pair{K,V}} where {K,V}
+#     s = state.store
+#     level_index, table_index, entry_index = missing, missing, missing
+#     for i in 1:length(s.levels)
+#         if !state.done[i]
+#             level_index, table_index, entry_index = i, state.tables_pointer[i], state.entries_pointer[i]
+#             break
+#         end
+#     end
+#     for i in (level_index + 1):length(s.levels)
+#         if !state.done[i]
+#             e = s.levels[i].tables[state.tables_pointer[i]].entries[state.entries_pointer[i]][]
+#             if e < s.levels[level_index].tables[table_index].entries[entry_index][]
+#                 level_index, table_index, entry_index = i, state.tables_pointer[i], state.entries_pointer[i]
+#             end
+#         end
+#     end
+#     state.entries_pointer[level_index] += 1
+#     if state.entries_pointer[level_index] > length(s.levels[level_index].tables[table_index])
+#         state.entries_pointer[level_index] = 1
+#         state.tables_pointer[level_index] += 1
+#         state.done[level_index] = state.tables_pointer[level_index] > length(s.levels[level_index].tables)
+#     end
+#     e = s.levels[level_index].tables[table_index].entries[entry_index][]
+#     return (done(state), Pair(e.key, e.val))
+# end
 
-function done(state::IterState) 
-    s = state.store
-    for i in 1:length(s.levels)
-        !state.done[i] && return false
-    end
-    return true
-end
+# function done(state::IterState) 
+#     s = state.store
+#     for i in 1:length(s.levels)
+#         !state.done[i] && return false
+#     end
+#     return true
+# end
 
-function seek_lub_search(hint_state::IterState{K, V}, search_key) where {K, V}
-    k = convert(K, search_key)
-    s = hint_state.store
-    ls = s.levels
-    for i in 1:length(ls)
-        table_index = key_table_index(ls[i], k)
-        table = ls[i].tables[table_index]
-        hint_state.tables_pointer[i] = table_index
-        hint_state.entries_pointer[i] = lub(table.entries, 1, length(table), k)
-    end
-end
+# function seek_lub_search(hint_state::IterState{K, V}, search_key) where {K, V}
+#     k = convert(K, search_key)
+#     s = hint_state.store
+#     ls = s.levels
+#     for i in 1:length(ls)
+#         table_index = key_table_index(ls[i], k)
+#         table = ls[i].tables[table_index]
+#         hint_state.tables_pointer[i] = table_index
+#         hint_state.entries_pointer[i] = lub(table.entries, 1, length(table), k)
+#     end
+# end
 
 function Base.dump(s::BaseStore)
     print("b\t")

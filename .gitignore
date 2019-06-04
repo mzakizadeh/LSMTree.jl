@@ -1,2 +1,3 @@
 blobs/*
 .vscode/*
+src/test.jl

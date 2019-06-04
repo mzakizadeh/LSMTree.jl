@@ -56,9 +56,9 @@ export BaseStore,
     Store, 
     get, 
     put!,
-    delete!,
-    iter_init, 
-    iter_next, 
-    seek_lub_search
+    delete!
+    # iter_init, 
+    # iter_next, 
+    # seek_lub_search
     
 end
