@@ -74,9 +74,10 @@ function compact(s::BaseStore{K, V}) where {K, V}
     # Create new level if we didn't find enough space in tree
     if isfull(next[])
         last_level = next
-        new_level = level(newlevel_id(), 
-                          last_level.max_size[] * s.fanout,
-                          s.table_threshold_size)
+        new_level = missing
+        # new_level = level(create_id(), 
+                        #   last_level.max_size[] * s.fanout,
+                        #   s.table_threshold_size)
         last_level.next_level[] = new_level
         # If there is only one level then there's no need to continue 
         isfirst(last_level) && return

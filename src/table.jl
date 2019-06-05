@@ -4,12 +4,20 @@ struct Table{K, V}
     entries::BlobVector{Entry{K, V}}
 end
 
-inmemory_tables = Dict{Int64, Blob{Table}}()
+inmemory_tables = Dict{Int64, Blob}()
 
 Base.length(t::Table) = t.size[]
 min(t::Table) = t.entries[1].key[]
 max(t::Table) = t.entries[t.size].key[]
-new_tid() = reverse(sort(collect(keys(inmemory_levels)))) + 1
+
+function create_id(::Type{Table})
+    length(inmemory_tables) == 0 && return 1
+    return reverse(sort(collect(keys(inmemory_tables))))[1] + 1
+end
+
+function get_table(id::Int64) 
+    haskey(inmemory_tables, id) && return inmemory_tables[id]
+end
 
 function Blobs.child_size(::Type{Table{K, V}}, 
                           entries::Vector{Blob{Entry{K, V}}}) where {K, V}
@@ -26,6 +34,7 @@ function Blobs.init(l::Blob{Table{K, V}},
         l.entries[i].val[] = entries[i][].val
         l.entries[i].deleted[] = entries[i][].deleted
     end
+    l.id[] = create_id(Table)
     l.size[] = length(entries)
     free
 end
@@ -49,7 +58,7 @@ function Base.merge(t::Blob{Table{K, V}},
         for e in v push!(result_entries, e) end
         return Blobs.malloc_and_init(Table{K, V}, result_entries)
     end
-    i, j, size = 1, start_index, 0
+    i, j, size = 1, start_index + 1, 0
     while i <= length(t[]) && j <= end_index
         if isequal(t.entries[i][], v[j][])
             if !force_remove || !v[j].deleted[]
