@@ -20,6 +20,28 @@ function create_id(::Type{Level})
     return reverse(sort(collect(keys(inmemory_levels))))[1] + 1
 end
 
+function get_level(::Type{Level{K, V}}, id::Int64) where {K, V}
+    haskey(inmemory_levels, id) && return inmemory_levels[id]
+    path = "blobs/$id.lvl"
+    if isfile(path)
+        open(path) do f
+            size = filesize(f)
+            p = Libc.malloc(size)
+            b = Blob{Level{K, V}}(p, 0, size)
+            unsafe_read(f, p, size)
+            inmemory_levels[b.id[]] = b
+        end
+        return inmemory_levels[id]
+    end
+    nothing
+end
+
+function write(t::Blob{Level{K, V}}) where {K, V}
+    open("blobs/$(t.id[]).lvl", "w+") do file
+        unsafe_write(file, pointer(t), getfield(t, :limit))
+    end
+end
+
 function Blobs.child_size(::Type{Level{K, V}}, 
                           result_tables::Vector{Int64},
                           result_bounds::Vector{K},
@@ -53,11 +75,6 @@ function Blobs.init(l::Blob{Level{K, V}},
     l.next_level[], l.prev_level[] = -1, -1
     free
 end
-
-function get_level(id::Int64) where {K, V}
-    haskey(inmemory_levels, id) && return inmemory_levels[id]
-    # TODO open level from saved file
-end 
 
 function Base.length(l::Level)
     len = 0

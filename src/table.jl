@@ -15,8 +15,26 @@ function create_id(::Type{Table})
     return reverse(sort(collect(keys(inmemory_tables))))[1] + 1
 end
 
-function get_table(id::Int64) 
+function get_table(::Type{Table{K, V}}, id::Int64) where {K, V}
     haskey(inmemory_tables, id) && return inmemory_tables[id]
+    path = "blobs/$id.tbl"
+    if isfile(path)
+        open(path) do f
+            size = filesize(f)
+            p = Libc.malloc(size)
+            b = Blob{Table{K, V}}(p, 0, size)
+            unsafe_read(f, p, size)
+            inmemory_tables[b.id[]] = b
+        end
+        return inmemory_tables[id]
+    end
+    nothing
+end
+
+function write(t::Blob{Table{K, V}}) where {K, V}
+    open("blobs/$(t.id[]).tbl", "w+") do file
+        unsafe_write(file, pointer(t), getfield(t, :limit))
+    end
 end
 
 function Blobs.child_size(::Type{Table{K, V}}, 
