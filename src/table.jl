@@ -16,6 +16,7 @@ function create_id(::Type{Table})
 end
 
 function get_table(::Type{Table{K, V}}, id::Int64) where {K, V}
+    id <= 0 && return nothing
     haskey(inmemory_tables, id) && return inmemory_tables[id]
     path = "blobs/$id.tbl"
     if isfile(path)

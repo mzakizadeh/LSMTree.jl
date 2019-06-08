@@ -14,6 +14,7 @@ inmemory_levels = Dict{Int64, Blob}()
 isfull(l::Level) = l.size >= l.max_size
 islast(l::Level) = l.next_level <= 0
 isfirst(l::Level) = l.prev_level <= 0
+length(l::Level) = l.size
 
 function create_id(::Type{Level}) 
     length(inmemory_levels) == 0 && return 1
@@ -21,6 +22,7 @@ function create_id(::Type{Level})
 end
 
 function get_level(::Type{Level{K, V}}, id::Int64) where {K, V}
+    id <= 0 && return nothing
     haskey(inmemory_levels, id) && return inmemory_levels[id]
     path = "blobs/$id.lvl"
     if isfile(path)

@@ -52,8 +52,8 @@ include("buffer.jl")
 include("level.jl")
 include("store.jl")
 
-export BaseStore, 
-    Store, 
+export Store, 
+    StoreData, 
     get, 
     put!,
     delete!
