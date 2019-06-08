@@ -14,7 +14,7 @@ inmemory_levels = Dict{Int64, Blob}()
 isfull(l::Level) = l.size >= l.max_size
 islast(l::Level) = l.next_level <= 0
 isfirst(l::Level) = l.prev_level <= 0
-length(l::Level) = l.size
+Base.length(l::Level) = l.size
 
 function create_id(::Type{Level}) 
     length(inmemory_levels) == 0 && return 1
