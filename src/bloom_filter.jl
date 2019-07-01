@@ -1,9 +1,5 @@
 # https://github.com/johnmyleswhite/BloomFilters.jl
 
-using Compat
-using Mmap: mmap
-using Printf
-
 k_errors = Vector{Vector{Float64}}(undef, 12)
 
 k_errors[1] = [1.0,

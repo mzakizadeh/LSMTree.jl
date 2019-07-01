@@ -29,6 +29,9 @@ function lub(v::Vector, lo::Integer, hi::Integer, k::K) where K
     lo
 end
 
+isnothing(::Any) = false
+isnothing(::Nothing) = true
+
 struct Entry{K, V}
     key::K
     val::V

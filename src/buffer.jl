@@ -23,7 +23,7 @@ function Base.put!(b::Buffer{K, V}, key, val, deleted=false) where {K, V}
         i > 0 && deleteat!(b.entries, i)
     end
     e = Entry{K, V}(key, val, deleted)
-    b.size += sizeof(e)
+    b.size += 1
     add!(b.bf[], key)
     push!(b.entries, e)
 end
@@ -33,4 +33,16 @@ function Base.get(b::Buffer{K, V}, key) where {K, V}
     sort!(b.entries)
     i = bsearch(b.entries, 1, length(b.entries), key)
     i > 0 ? (isdeleted(b.entries[i]) ? nothing : b.entries[i].val) : nothing
+end
+
+function to_blob(b::Buffer{K, V}) where {K, V} 
+    sort!(b.entries)
+    size = length(b.entries)
+    bv = Blobs.malloc_and_init(BlobVector{Entry{K, V}}, size)
+    for i in 1:size
+        bv[i].key[] = b.entries[i].key
+        bv[i].val[] = b.entries[i].val
+        bv[i].deleted[] = b.entries[i].deleted
+    end
+    return bv
 end

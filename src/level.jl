@@ -11,39 +11,6 @@ end
 
 inmemory_levels = Dict{Int64, Blob}()
 
-isfull(l::Level) = l.size >= l.max_size
-islast(l::Level) = l.next_level <= 0
-isfirst(l::Level) = l.prev_level <= 0
-Base.length(l::Level) = l.size
-
-function create_id(::Type{Level}) 
-    length(inmemory_levels) == 0 && return 1
-    return reverse(sort(collect(keys(inmemory_levels))))[1] + 1
-end
-
-function get_level(::Type{Level{K, V}}, id::Int64) where {K, V}
-    id <= 0 && return nothing
-    haskey(inmemory_levels, id) && return inmemory_levels[id]
-    path = "blobs/$id.lvl"
-    if isfile(path)
-        open(path) do f
-            size = filesize(f)
-            p = Libc.malloc(size)
-            b = Blob{Level{K, V}}(p, 0, size)
-            unsafe_read(f, p, size)
-            inmemory_levels[b.id[]] = b
-        end
-        return inmemory_levels[id]
-    end
-    nothing
-end
-
-function write(t::Blob{Level{K, V}}) where {K, V}
-    open("blobs/$(t.id[]).lvl", "w+") do file
-        unsafe_write(file, pointer(t), getfield(t, :limit))
-    end
-end
-
 function Blobs.child_size(::Type{Level{K, V}}, 
                           result_tables::Vector{Int64},
                           result_bounds::Vector{K},
@@ -78,6 +45,51 @@ function Blobs.init(l::Blob{Level{K, V}},
     free
 end
 
+isfull(l::Level) = l.size >= l.max_size
+islast(l::Level) = l.next_level <= 0
+isfirst(l::Level) = l.prev_level <= 0
+Base.length(l::Level) = l.size
+
+function create_id(::Type{Level}) 
+    length(inmemory_levels) == 0 && return 1
+    return reverse(sort(collect(keys(inmemory_levels))))[1] + 1
+end
+
+function empty(l::Blob{Level{K, V}}) where {K, V}
+    res = Blobs.malloc_and_init(Level{K, V}, 
+                                Vector{Int64}(), 
+                                Vector{K}(), 0, 
+                                l.max_size[], 
+                                l.table_threshold_size[])
+    res.id[] = l.id[]
+    res.prev_level[] = l.prev_level[]
+    res.next_level[] = l.next_level[]
+    return res
+end
+
+function get_level(::Type{Level{K, V}}, id::Int64) where {K, V}
+    id <= 0 && return nothing
+    haskey(inmemory_levels, id) && return inmemory_levels[id]
+    path = "blobs/$id.lvl"
+    if isfile(path)
+        open(path) do f
+            size = filesize(f)
+            p = Libc.malloc(size)
+            b = Blob{Level{K, V}}(p, 0, size)
+            unsafe_read(f, p, size)
+            inmemory_levels[b.id[]] = b
+        end
+        return inmemory_levels[id]
+    end
+    nothing
+end
+
+function write(t::Blob{Level{K, V}}) where {K, V}
+    open("blobs/$(t.id[]).lvl", "w+") do file
+        unsafe_write(file, pointer(t), getfield(t, :limit))
+    end
+end
+
 function Base.length(l::Level)
     len = 0
     for t in l.tables len += length(t) end
@@ -92,40 +104,85 @@ function Base.get(l::Level{K, V}, key::K) where {K, V}
     # else return nothing end
 end
 
-function compact(l::Blob{Level{K, V}}, 
-                 t::Blob{Table{K, V}}, 
-                 force_remove=false) where {K, V} 
+function compact(l::Blob{Level{K, V}},
+                 t::Blob{Table{K, V}},
+                 force_remove) where {K, V}
     indecies = partition(l.bounds[], t.entries[])
+    return merge(l, t.entries[], indecies, force_remove)
+end
+
+function Base.merge(l::Blob{Level{K, V}},
+               e::BlobVector{Entry{K, V}},
+               indecies::Vector{Int64}, 
+               force_remove) where {K, V}
     result_tables, result_bounds = Vector{Int64}(), Vector{K}()
-    for i in 1:length(l.tables[])
-        if indecies[i + 1] - indecies[i] > 0
-            table = merge(get_table(l.tables[i][]), 
-                          t.entries, 
-                          indecies[i], 
-                          indecies[i + 1], 
+    # If level has no table
+    if length(indecies) < 3
+        if length(l.tables[]) > 0
+            table = merge(get_table(Table{K, V}, l.tables[1][]), 
+                          e, 
+                          indecies[1], 
+                          indecies[2], 
                           force_remove)
-            if table.size[] > l.table_threshold_size[]
-                (t1, t2) = split(table)
-                inmemory_tables[t1.id[]] = t1
-                push!(result_tables, t1.id[])
-                push!(result_bounds, max(t1[]))
-                inmemory_tables[t2.id[]] = t2
-                push!(result_tables, t2.id[])
-                push!(result_bounds, max(t2[]))
-            else 
-                inmemory_tables[table.id[]] = table
-                push!(result_tables, table.id[])
-                push!(result_bounds, max(table[]))
+        else
+            entries = Vector{Entry{K, V}}()
+            for i in 1:length(e)
+                push!(entries, e[i])
+            end
+            table = Blobs.malloc_and_init(Table{K, V}, entries)
+        end
+        if table.size[] > l.table_threshold_size[]
+            (t1, t2) = split(table)
+            inmemory_tables[t1.id[]] = t1
+            push!(result_tables, t1.id[])
+            push!(result_bounds, max(t1[]))
+            inmemory_tables[t2.id[]] = t2
+            push!(result_tables, t2.id[])
+            push!(result_bounds, max(t2[]))
+        else
+            inmemory_tables[table.id[]] = table
+            push!(result_tables, table.id[])
+            push!(result_bounds, max(table[]))
+        end
+    else
+        for i in 1:length(l.tables[])
+            if indecies[i + 1] - indecies[i] > 0
+                table = merge(get_table(Table{K, V}, l.tables[i][]), 
+                            e, 
+                            indecies[i], 
+                            indecies[i + 1], 
+                            force_remove)
+                if table.size[] > l.table_threshold_size[]
+                    (t1, t2) = split(table)
+                    inmemory_tables[t1.id[]] = t1
+                    push!(result_tables, t1.id[])
+                    push!(result_bounds, max(t1[]))
+                    inmemory_tables[t2.id[]] = t2
+                    push!(result_tables, t2.id[])
+                    push!(result_bounds, max(t2[]))
+                    println(t1[])
+                    println()
+                    println(t2[])
+                    println()
+                else
+                    inmemory_tables[table.id[]] = table
+                    push!(result_tables, table.id[])
+                    push!(result_bounds, max(table[]))
+                end
             end
         end
     end
     pop!(result_bounds)
-    return Blobs.malloc_and_init(Level{K, V}, 
-                                 result_tables, 
-                                 result_bounds,
-                                 l.size[] + t.size[],
-                                 l.max_size[],
-                                 l.table_threshold_size[])
+    res = Blobs.malloc_and_init(Level{K, V}, 
+                                result_tables, 
+                                result_bounds,
+                                l.size[] + length(e),
+                                l.max_size[],
+                                l.table_threshold_size[])
+    res.prev_level[], res.next_level[] = l.prev_level[], l.next_level[]
+    next = get_level(Level{K, V}, res.next_level[])
+    if !isnothing(next) next.prev_level[] = res.id[] end
+    return res
 end
 
 # Returns indices
