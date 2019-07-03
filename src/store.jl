@@ -27,17 +27,36 @@ end
 mutable struct Store{K, V}
     buffer::Buffer{K, V}
     data::Blob{StoreData{K, V}}
-    function Store{K, V}(buffer_max_size::Integer=1000) where {K, V} 
-        data = Blobs.malloc_and_init(StoreData{K, V}, 2, buffer_max_size * 2, 10)
+    function Store{K, V}(buffer_max_size::Integer=2000000, 
+                         table_threshold_size = 2000000) where {K, V} 
+        # TODO get path as an input
+        mkpath("blobs")
+        data = Blobs.malloc_and_init(StoreData{K, V}, 2, 
+                                     buffer_max_size * 2, 
+                                     table_threshold_size)
         new{K, V}(Buffer{K, V}(buffer_max_size), data)
     end
 end
 
 isempty(s::StoreData{K, V}) where {K, V} = s.first_level <= 0
 
-function Base.length(s::Store)
+function Base.length(s::Store{K, V}) where {K, V}
     len = length(s.buffer.entries)
-    for l in s.data.levels len += length(l) end
+    l = get_level(Level{K, V}, s.data.first_level[])
+    while !isnothing(l) 
+        len += l.size[] 
+        l = get_level(Level{K, V}, l.next_level[])
+    end
+    return len
+end
+
+function levels_count(s::Store{K, V}) where {K, V}
+    len = 0
+    l = get_level(Level{K, V}, s.data.first_level[])
+    while !isnothing(l) 
+        len += 1 
+        l = get_level(Level{K, V}, l.next_level[])
+    end
     return len
 end
 
@@ -45,9 +64,11 @@ function Base.get(s::Store{K, V}, key) where {K, V}
     key = convert(K, key) 
     val = get(s.buffer, key)
     !isnothing(val) && return val
-    for l in s.levels
-        val = get(l, key)
+    l = get_level(Level{K, V}, s.data.first_level[])
+    while !isnothing(l)
+        val = get(l[], key)
         !isnothing(val) && return val
+        l = get_level(Level{K, V}, l.next_level[])
     end
     nothing
 end
@@ -62,18 +83,24 @@ function Base.put!(s::Store{K, V}, key, val, deleted=false) where {K, V}
         entries = to_blob(s.buffer)
         indecies = partition(first_level.bounds[], entries[])
         l = merge(first_level, entries[], indecies, true)
-        inmemory_levels[l.id[]] = l
+        set_level(l)
         s.data.first_level[] = l.id[]
         empty!(s.buffer)
-        dump(s)
     end
 end
+
+Base.setindex!(s::Store{K, V}, key::K, val::V) where {K, V} = put!(s, key, val)
+Base.getindex(s::Store{K, V}, key::K) where {K, V} = get(s, key)
 
 # TODO delete key without getting the value
 function Base.delete!(s::StoreData, key)
     val = get(s, key)
     @assert !isnothing(val)
     put!(s, key, val, true)
+end
+
+function Base.delete!(s::Store)
+    rm("blobs", recursive=true, force=true)
 end
 
 function compact(s::Store{K, V}) where {K, V}
@@ -100,7 +127,7 @@ function compact(s::Store{K, V}) where {K, V}
                                           0, 
                                           s.buffer.max_size * s.data.fanout[], 
                                           s.data.table_threshold_size[])
-        inmemory_levels[new_level.id[]] = new_level
+        set_level(new_level)
         s.data.first_level[] = new_level.id[]
         return
     end
@@ -115,91 +142,74 @@ function compact(s::Store{K, V}) where {K, V}
                                           s.data.table_threshold_size[])
         new_level.prev_level[] = last_level.id[]
         last_level.next_level[] = new_level.id[]
-        inmemory_levels[new_level.id[]] = new_level
+        set_level(new_level)
         current, next = last_level, new_level
     end
     # Compact levels and free up space in first level
-    temp = nothing
+    after_next = get_level(Level{K, V}, next.next_level[])
     while !isfirst(next[]) 
         for table in current.tables[]
             next = compact(next, get_table(Table{K, V}, table), force_remove)
         end
-        inmemory_levels[next.id[]] = next
-        if !isnothing(temp) 
-            temp.prev_level[] = next.id[]
+        if !isnothing(after_next) 
+            next.next_level[] = after_next.id[]
+            after_next.prev_level[] = next.id[]
         end
-        next.next_level[] = isnothing(temp) ? -1 : temp.id[]
+        set_level(next)
+        current = empty(current)
         current.next_level[] = next.id[]
-        inmemory_levels[current.id[]] = empty(current)
-        temp = next
+        set_level(current)
+        after_next = next
         next = current
         current = get_level(Level{K, V}, current.prev_level[])
         force_remove = false
     end
 end
 
-# struct IterState{K, V}
-#     store::ImmutableStore{K, V}
-#     tables_pointer::Vector{Integer}
-#     entries_pointer::Vector{Integer}
-#     done::Vector{Bool}
-#     function IterState{K, V}(s::BaseStore{K, V}) where {K, V}
-#         store = s isa Store ? ImmutableStore{K, V}(s) : s
-#         new(
-#             store, 
-#             ones(Integer, length(store.levels)), 
-#             ones(Integer, length(store.levels)), 
-#             falses(length(store.levels))
-#         )
-#     end
-# end
-
-# iter_init(s::BaseStore{K, V}) where {K, V} = IterState{K, V}(s)
-
-# function iter_next(state::IterState{K, V})::Tuple{Bool, Pair{K,V}} where {K,V}
-#     s = state.store
-#     level_index, table_index, entry_index = missing, missing, missing
-#     for i in 1:length(s.levels)
-#         if !state.done[i]
-#             level_index, table_index, entry_index = i, state.tables_pointer[i], state.entries_pointer[i]
-#             break
+# struct Iterator{K, V}
+#     start::K
+#     buffer_entries::Vector{Entry{K, V}}
+#     levels::Vector{Level{K, V}}
+#     function Iterator(s::Store{K, V}) where {K, V}
+#         levels = Vector{Level{K, V}}()
+#         l = get_level(Level{K, V}, s.data.first_level[])
+#         while !isnothing(l)
+#             push!(levels, l[])
+#             l = get_level(Level{K, V}, l.next_level[])
 #         end
-#     end
-#     for i in (level_index + 1):length(s.levels)
-#         if !state.done[i]
-#             e = s.levels[i].tables[state.tables_pointer[i]].entries[state.entries_pointer[i]][]
-#             if e < s.levels[level_index].tables[table_index].entries[entry_index][]
-#                 level_index, table_index, entry_index = i, state.tables_pointer[i], state.entries_pointer[i]
+#         for level in levels
+#             for t in level.tables
+#                 start = min(start, min(get_table(Table{K, V}, t)[]))
 #             end
 #         end
+#         new{K, V}(start, sort(s.buffer.entries), levels)
 #     end
-#     state.entries_pointer[level_index] += 1
-#     if state.entries_pointer[level_index] > length(s.levels[level_index].tables[table_index])
-#         state.entries_pointer[level_index] = 1
-#         state.tables_pointer[level_index] += 1
-#         state.done[level_index] = state.tables_pointer[level_index] > length(s.levels[level_index].tables)
+#     function Iterator(s::Store{K, V}, start) where {K, V}
+#         levels = Vector{Level{K, V}}()
+#         l = get_level(Level{K, V}, s.data.first_level[])
+#         while !isnothing(l)
+#             push!(levels, l[])
+#             l = get_level(Level{K, V}, l.next_level[])
+#         end
+#         new{K, V}(convert(K, start), sort(s.buffer.entries), levels)
 #     end
-#     e = s.levels[level_index].tables[table_index].entries[entry_index][]
-#     return (done(state), Pair(e.key, e.val))
 # end
 
-# function done(state::IterState) 
-#     s = state.store
-#     for i in 1:length(s.levels)
-#         !state.done[i] && return false
-#     end
-#     return true
+# struct IterationState{K, V}
+#     current_buffer_state::Int64,
+#     current_levels_state::Vector{LevelIterationState{K, V}}
 # end
 
-# function seek_lub_search(hint_state::IterState{K, V}, search_key) where {K, V}
-#     k = convert(K, search_key)
-#     s = hint_state.store
-#     ls = s.levels
-#     for i in 1:length(ls)
-#         table_index = key_table_index(ls[i], k)
-#         table = ls[i].tables[table_index]
-#         hint_state.tables_pointer[i] = table_index
-#         hint_state.entries_pointer[i] = lub(table.entries, 1, length(table), k)
+# function Base.start(iter::Iterator{K, V}) where {K, V}
+#     levels_state = Vector{LevelIterationState{K, V}}()
+#     for i in 1:length(iter.levels)
+#         table_index = key_table_index(iter.levels[i], iter.start)
+#         t = get_table(Table{K, V}, iter.levels[i].tables[table_index])[]
+#         entry_index = lub(t.entries, 1, t.size, iter.start)
+#         push!(levels_state, LevelIterationState(t.entries[entry_index],
+#                                                 table_index,
+#                                                 entry_index,
+#                                                 t.size > 0))
 #     end
 # end
 

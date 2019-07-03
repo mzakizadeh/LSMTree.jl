@@ -23,7 +23,7 @@ function get_table(::Type{Table{K, V}}, id::Int64) where {K, V}
         open(path) do f
             size = filesize(f)
             p = Libc.malloc(size)
-            b = Blob{Table{K, V}}(p, 0, size)
+            b = Blob{Table{K, V}}(p, 0, size) 
             unsafe_read(f, p, size)
             inmemory_tables[b.id[]] = b
         end
@@ -32,7 +32,8 @@ function get_table(::Type{Table{K, V}}, id::Int64) where {K, V}
     nothing
 end
 
-function write(t::Blob{Table{K, V}}) where {K, V}
+function set_table(t::Blob{Table{K, V}}) where {K, V}
+    inmemory_tables[t.id[]] = t
     open("blobs/$(t.id[]).tbl", "w+") do file
         unsafe_write(file, pointer(t), getfield(t, :limit))
     end
@@ -59,12 +60,12 @@ function Blobs.init(l::Blob{Table{K, V}},
 end
 
 function Base.get(t::Table{K, V}, key::K) where {K, V} 
-    i = bsearch(t.entries, 1, length(t), convert(K, key))
+    i = bsearch(t.entries, 1, length(t), key)
     if i > 0
-        result = t.entries[i][]
+        result = t.entries[i]
         return isdeleted(result) ? nothing : result.val
     end
-    return nothing
+    nothing
 end
 
 function Base.merge(t::Blob{Table{K, V}},

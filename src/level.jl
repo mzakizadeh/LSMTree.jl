@@ -45,10 +45,16 @@ function Blobs.init(l::Blob{Level{K, V}},
     free
 end
 
+# struct LevelIterationState{K, V}
+#     current_key::K,
+#     current_table_index::Int64,
+#     current_entry_index::Int64,
+#     done::Bool
+# end
+
 isfull(l::Level) = l.size >= l.max_size
 islast(l::Level) = l.next_level <= 0
 isfirst(l::Level) = l.prev_level <= 0
-Base.length(l::Level) = l.size
 
 function create_id(::Type{Level}) 
     length(inmemory_levels) == 0 && return 1
@@ -84,9 +90,10 @@ function get_level(::Type{Level{K, V}}, id::Int64) where {K, V}
     nothing
 end
 
-function write(t::Blob{Level{K, V}}) where {K, V}
-    open("blobs/$(t.id[]).lvl", "w+") do file
-        unsafe_write(file, pointer(t), getfield(t, :limit))
+function set_level(l::Blob{Level{K, V}}) where {K, V}
+    inmemory_levels[l.id[]] = l
+    open("blobs/$(l.id[]).lvl", "w+") do file
+        unsafe_write(file, pointer(l), getfield(l, :limit))
     end
 end
 
@@ -98,10 +105,14 @@ end
 
 function Base.get(l::Level{K, V}, key::K) where {K, V} 
     # if isset(l.bf, key)
-        for t in l.tables
-            if key >= min(t) && key <= max(t) return get(t, key) end
+        for i in 1:length(l.tables)
+            i == length(l.tables) && return get(get_table(Table{K, V}, l.tables[i])[], key)
+            if key <= l.bounds[i]
+                return get(get_table(Table{K, V}, l.tables[i])[], key)
+            end
         end
     # else return nothing end
+    nothing
 end
 
 function compact(l::Blob{Level{K, V}},
@@ -113,16 +124,16 @@ end
 
 function Base.merge(l::Blob{Level{K, V}},
                e::BlobVector{Entry{K, V}},
-               indecies::Vector{Int64}, 
+               indices::Vector{Int64}, 
                force_remove) where {K, V}
     result_tables, result_bounds = Vector{Int64}(), Vector{K}()
     # If level has no table
-    if length(indecies) < 3
+    if length(indices) < 3
         if length(l.tables[]) > 0
             table = merge(get_table(Table{K, V}, l.tables[1][]), 
                           e, 
-                          indecies[1], 
-                          indecies[2], 
+                          indices[1], 
+                          indices[2], 
                           force_remove)
         else
             entries = Vector{Entry{K, V}}()
@@ -133,42 +144,41 @@ function Base.merge(l::Blob{Level{K, V}},
         end
         if table.size[] > l.table_threshold_size[]
             (t1, t2) = split(table)
-            inmemory_tables[t1.id[]] = t1
+            set_table(t1)
             push!(result_tables, t1.id[])
             push!(result_bounds, max(t1[]))
-            inmemory_tables[t2.id[]] = t2
+            set_table(t2)
             push!(result_tables, t2.id[])
             push!(result_bounds, max(t2[]))
         else
-            inmemory_tables[table.id[]] = table
+            set_table(table)
             push!(result_tables, table.id[])
             push!(result_bounds, max(table[]))
         end
     else
         for i in 1:length(l.tables[])
-            if indecies[i + 1] - indecies[i] > 0
+            if indices[i + 1] - indices[i] > 0
                 table = merge(get_table(Table{K, V}, l.tables[i][]), 
-                            e, 
-                            indecies[i], 
-                            indecies[i + 1], 
-                            force_remove)
+                              e, 
+                              indices[i], 
+                              indices[i + 1], 
+                              force_remove)
                 if table.size[] > l.table_threshold_size[]
                     (t1, t2) = split(table)
-                    inmemory_tables[t1.id[]] = t1
+                    set_table(t1)
                     push!(result_tables, t1.id[])
                     push!(result_bounds, max(t1[]))
-                    inmemory_tables[t2.id[]] = t2
+                    set_table(t2)
                     push!(result_tables, t2.id[])
                     push!(result_bounds, max(t2[]))
-                    println(t1[])
-                    println()
-                    println(t2[])
-                    println()
                 else
-                    inmemory_tables[table.id[]] = table
+                    set_table(table)
                     push!(result_tables, table.id[])
                     push!(result_bounds, max(table[]))
                 end
+            else 
+                push!(result_tables, l.tables[i][])
+                push!(result_bounds, i != length(l.tables[]) ? l.bounds[i][] : i)
             end
         end
     end
@@ -201,7 +211,7 @@ function partition(bounds::BlobVector{K},
         end
         i += 1
     end
-    while length(indecies) < length(bounds)
+    while length(indecies) < length(bounds) + 1
         push!(indecies, i - 1)
     end
     push!(indecies, length(entries))
@@ -209,7 +219,7 @@ function partition(bounds::BlobVector{K},
 end
 
 function key_table_index(l::Level{K, V}, k::K) where {K, V}
-    k < l.bounds[1] && return 1
+    k <= l.bounds[1] && return 1
     k > l.bounds[length(l.bounds)] && return length(l.tables)
     for i in 1:length(l.bounds) - 1
         k > l.bounds[i] && k < l.bounds[i + 1] && return i + 1

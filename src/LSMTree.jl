@@ -1,7 +1,7 @@
 module LSMTree
 using Blobs
 
-function bsearch(v::Vector, l::Integer, r::Integer, k::K) where K
+function bsearch(v::Union{Vector, BlobVector}, l::Integer, r::Integer, k::K) where K
     while l <= r
         mid = floor(Int, l + (r - l) / 2)
         if v[mid].key[] == k
