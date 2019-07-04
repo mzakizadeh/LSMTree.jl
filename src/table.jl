@@ -7,8 +7,8 @@ end
 inmemory_tables = Dict{Int64, Blob}()
 
 Base.length(t::Table) = t.size[]
-min(t::Table) = t.entries[1].key[]
-max(t::Table) = t.entries[t.size].key[]
+Base.min(t::Table) = t.entries[1].key[]
+Base.max(t::Table) = t.entries[t.size].key[]
 
 function create_id(::Type{Table})
     length(inmemory_tables) == 0 && return 1
@@ -63,7 +63,7 @@ function Base.get(t::Table{K, V}, key::K) where {K, V}
     i = bsearch(t.entries, 1, length(t), key)
     if i > 0
         result = t.entries[i]
-        return isdeleted(result) ? nothing : result.val
+        return result
     end
     nothing
 end
@@ -74,10 +74,6 @@ function Base.merge(t::Blob{Table{K, V}},
                     end_index::Int64,
                     force_remove) where {K, V}
     result_entries = Vector{Entry{K, V}}()
-    if length(t[]) == 0 
-        for e in v push!(result_entries, e) end
-        return Blobs.malloc_and_init(Table{K, V}, result_entries)
-    end
     i, j, size = 1, start_index + 1, 0
     while i <= length(t[]) && j <= end_index
         if isequal(t.entries[i][], v[j])
@@ -102,13 +98,17 @@ function Base.merge(t::Blob{Table{K, V}},
         end
     end
     while i <= length(t[])
-        push!(result_entries, t.entries[i][])
-        size += 1
+        if !force_remove || !t.entries[i][].deleted 
+            push!(result_entries, t.entries[i][])
+            size += 1
+        end
         i += 1
     end
     while j <= end_index
-        push!(result_entries, v[j])
-        size += 1
+        if !force_remove || !v[j].deleted
+            push!(result_entries, v[j])
+            size += 1
+        end
         j += 1
     end
     return Blobs.malloc_and_init(Table{K, V}, result_entries)

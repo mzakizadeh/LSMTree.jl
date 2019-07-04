@@ -45,13 +45,6 @@ function Blobs.init(l::Blob{Level{K, V}},
     free
 end
 
-# struct LevelIterationState{K, V}
-#     current_key::K,
-#     current_table_index::Int64,
-#     current_entry_index::Int64,
-#     done::Bool
-# end
-
 isfull(l::Level) = l.size >= l.max_size
 islast(l::Level) = l.next_level <= 0
 isfirst(l::Level) = l.prev_level <= 0
@@ -134,7 +127,7 @@ function Base.merge(l::Blob{Level{K, V}},
                           e, 
                           indices[1], 
                           indices[2], 
-                          force_remove)
+                          false)
         else
             entries = Vector{Entry{K, V}}()
             for i in 1:length(e)
@@ -162,7 +155,7 @@ function Base.merge(l::Blob{Level{K, V}},
                               e, 
                               indices[i], 
                               indices[i + 1], 
-                              force_remove)
+                              false)
                 if table.size[] > l.table_threshold_size[]
                     (t1, t2) = split(table)
                     set_table(t1)

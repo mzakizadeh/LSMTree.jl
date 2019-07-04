@@ -20,7 +20,8 @@ function Base.put!(b::Buffer{K, V}, key, val, deleted=false) where {K, V}
 end
 
 function Base.get(b::Buffer{K, V}, key) where {K, V}
-    return b.entries[key]
+    haskey(b.entries, key) && return b.entries[key]
+    nothing
 end
 
 function to_blob(b::Buffer{K, V}) where {K, V} 

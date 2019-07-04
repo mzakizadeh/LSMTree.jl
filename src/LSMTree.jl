@@ -4,9 +4,9 @@ using Blobs
 function bsearch(v::Union{Vector, BlobVector}, l::Integer, r::Integer, k::K) where K
     while l <= r
         mid = floor(Int, l + (r - l) / 2)
-        if v[mid].key[] == k
+        if v[mid].key == k
             return mid
-        elseif v[mid].key[] < k 
+        elseif v[mid].key < k 
             l = mid + 1
         else
             r = mid - 1
@@ -15,8 +15,8 @@ function bsearch(v::Union{Vector, BlobVector}, l::Integer, r::Integer, k::K) whe
     return 0
 end
 
-function lub(v::Vector, lo::Integer, hi::Integer, k::K) where K
-    p = i -> k < v[i][].key
+function lub(v::Union{Vector, BlobVector}, lo::Integer, hi::Integer, k::K) where K
+    p = i -> k < v[i].key
     while lo < hi
         mid::Integer = floor(lo + (hi-lo) / 2)
         if p(mid)
@@ -55,13 +55,10 @@ include("buffer.jl")
 include("level.jl")
 include("store.jl")
 
-export Store, 
-    StoreData, 
-    get, 
-    put!,
-    delete!
-    # iter_init, 
-    # iter_next, 
-    # seek_lub_search
+export get, 
+       put!,
+       delete!,
+       iter_init, 
+       iter_next 
     
 end
