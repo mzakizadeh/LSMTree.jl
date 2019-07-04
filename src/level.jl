@@ -116,9 +116,9 @@ function compact(l::Blob{Level{K, V}},
 end
 
 function Base.merge(l::Blob{Level{K, V}},
-               e::BlobVector{Entry{K, V}},
-               indices::Vector{Int64}, 
-               force_remove) where {K, V}
+                    e::BlobVector{Entry{K, V}},
+                    indices::Vector{Int64}, 
+                    force_remove) where {K, V}
     result_tables, result_bounds = Vector{Int64}(), Vector{K}()
     # If level has no table
     if length(indices) < 3
@@ -183,8 +183,6 @@ function Base.merge(l::Blob{Level{K, V}},
                                 l.max_size[],
                                 l.table_threshold_size[])
     res.prev_level[], res.next_level[] = l.prev_level[], l.next_level[]
-    next = get_level(Level{K, V}, res.next_level[])
-    if !isnothing(next) next.prev_level[] = res.id[] end
     return res
 end
 

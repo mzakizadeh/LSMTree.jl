@@ -27,8 +27,8 @@ end
 mutable struct Store{K, V}
     buffer::Buffer{K, V}
     data::Blob{StoreData{K, V}}
-    function Store{K, V}(buffer_max_size::Integer=120000, 
-                         table_threshold_size = 120000) where {K, V} 
+    function Store{K, V}(buffer_max_size::Integer=125000, 
+                         table_threshold_size = 125000) where {K, V} 
         # TODO get path as an input
         mkpath("blobs")
         data = Blobs.malloc_and_init(StoreData{K, V}, 2, 
@@ -36,6 +36,8 @@ mutable struct Store{K, V}
                                      table_threshold_size)
         new{K, V}(Buffer{K, V}(buffer_max_size), data)
     end
+    Store{K, V}(data::Blob{StoreData{K, V}}) where {K, V} =
+        new{K, V}(Buffer{K, V}(floor(Int64, data.first_level_max_size[] / 2)), data)
 end
 
 isempty(s::StoreData{K, V}) where {K, V} = s.first_level <= 0
@@ -45,16 +47,6 @@ function Base.length(s::Store{K, V}) where {K, V}
     l = get_level(Level{K, V}, s.data.first_level[])
     while !isnothing(l) 
         len += l.size[] 
-        l = get_level(Level{K, V}, l.next_level[])
-    end
-    return len
-end
-
-function levels_count(s::Store{K, V}) where {K, V}
-    len = 0
-    l = get_level(Level{K, V}, s.data.first_level[])
-    while !isnothing(l) 
-        len += 1 
         l = get_level(Level{K, V}, l.next_level[])
     end
     return len
@@ -79,29 +71,34 @@ function Base.get(s::Store{K, V}, key) where {K, V}
     nothing
 end
 
+function buffer_dump(s::Store{K, V}) where {K, V}
+    s.buffer.size <= 0 && return
+    compact(s)
+    first_level = get_level(Level{K, V}, s.data.first_level[])
+    entries = to_blob(s.buffer)
+    indecies = partition(first_level.bounds[], entries[])
+    l = merge(first_level, entries[], indecies, true)
+    # TODO don't mutate level
+    next = get_level(Level{K, V}, l.next_level[])
+    if !isnothing(next) next.prev_level[] = l.id[] end
+    set_level(l)
+    s.data.first_level[] = l.id[]
+    empty!(s.buffer)
+end
+
 function Base.put!(s::Store{K, V}, key, val, deleted=false) where {K, V}
     key = convert(K, key)
     val = convert(V, val)
     put!(s.buffer, key, val, deleted)
-    if isfull(s.buffer)
-        compact(s)
-        first_level = get_level(Level{K, V}, s.data.first_level[])
-        entries = to_blob(s.buffer)
-        indecies = partition(first_level.bounds[], entries[])
-        l = merge(first_level, entries[], indecies, true)
-        set_level(l)
-        s.data.first_level[] = l.id[]
-        empty!(s.buffer)
-    end
+    isfull(s.buffer) && buffer_dump(s)
 end
 
 Base.setindex!(s::Store{K, V}, val::V, key::K) where {K, V} = put!(s, key, val)
 Base.getindex(s::Store{K, V}, key::K) where {K, V} = get(s, key)
 
 # TODO delete key without getting the value
-function Base.delete!(s::StoreData, key)
+function Base.delete!(s::Store, key)
     val = get(s, key)
-    @assert !isnothing(val)
     put!(s, key, val, true)
 end
 
@@ -127,7 +124,7 @@ function compact(s::Store{K, V}) where {K, V}
         current = get_level(Level{K, V}, current.next_level[]) 
         next = get_level(Level{K, V}, next.next_level[])
     end
-    # Create new level if tree has no level
+    # Create and return new level if tree has no level
     if isnothing(current)
         new_level = Blobs.malloc_and_init(Level{K, V}, 
                                           Vector{Int64}(),
@@ -165,6 +162,7 @@ function compact(s::Store{K, V}) where {K, V}
             after_next.prev_level[] = next.id[]
         end
         set_level(next)
+        # TODO use different id
         current = empty(current)
         current.next_level[] = next.id[]
         set_level(current)
@@ -173,6 +171,31 @@ function compact(s::Store{K, V}) where {K, V}
         current = get_level(Level{K, V}, current.prev_level[])
         force_remove = false
     end
+end
+
+function snapshot(s::Store{K, V}) where {K, V}
+    buffer_dump(s)
+    # The id of first level is always unique
+    # Therefore we also used it as store id
+    open("blobs/$(s.data.first_level[]).str", "w+") do file
+        unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
+    end
+end
+
+function restore(::Type{K}, ::Type{V}, id::Int64) where {K, V}
+    path = "blobs/$id.str"
+    if isfile(path)
+        s = missing
+        open(path) do f
+            size = filesize(f)
+            p = Libc.malloc(size)
+            b = Blob{StoreData{K, V}}(p, 0, size) 
+            unsafe_read(f, p, size)
+            s = Store{K, V}(b)
+        end
+        return s
+    end
+    nothing
 end
 
 struct Iterator{K, V}
