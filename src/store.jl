@@ -40,7 +40,7 @@ mutable struct Store{K, V}
         new{K, V}(Buffer{K, V}(floor(Int64, data.first_level_max_size[] / 2)), data)
 end
 
-isempty(s::StoreData{K, V}) where {K, V} = s.first_level <= 0
+Base.isempty(s::StoreData{K, V}) where {K, V} = s.first_level <= 0
 
 function Base.length(s::Store{K, V}) where {K, V}
     len = length(s.buffer.entries)
@@ -76,8 +76,8 @@ function buffer_dump(s::Store{K, V}) where {K, V}
     compact(s)
     first_level = get_level(Level{K, V}, s.data.first_level[])
     entries = to_blob(s.buffer)
-    indecies = partition(first_level.bounds[], entries[])
-    l = merge(first_level, entries[], indecies, true)
+    indices = partition(first_level.bounds[], entries[])
+    l = merge(first_level, entries[], indices, true)
     # TODO don't mutate level
     next = get_level(Level{K, V}, l.next_level[])
     if !isnothing(next) next.prev_level[] = l.id[] end
@@ -93,8 +93,8 @@ function Base.put!(s::Store{K, V}, key, val, deleted=false) where {K, V}
     isfull(s.buffer) && buffer_dump(s)
 end
 
-Base.setindex!(s::Store{K, V}, val::V, key::K) where {K, V} = put!(s, key, val)
-Base.getindex(s::Store{K, V}, key::K) where {K, V} = get(s, key)
+Base.setindex!(s::Store{K, V}, val, key) where {K, V} = put!(s, key, val)
+Base.getindex(s::Store{K, V}, key) where {K, V} = get(s, key)
 
 # TODO delete key without getting the value
 function Base.delete!(s::Store, key)
@@ -106,6 +106,44 @@ function Base.delete!(s::Store)
     rm("blobs", recursive=true, force=true)
     empty!(inmemory_levels)
     empty!(inmemory_tables)
+end
+
+function gc(s::Store{K, V}) where {K, V}
+    only_levels_pattern = x -> occursin(r"([0-9])+(.lvl)$", x)
+    only_stores_pattern = x -> occursin(r"([0-9])+(.str)$", x)
+    level_files = filter(only_levels_pattern, readdir("blobs"))
+    level_ids = sort(map(x -> parse(Int64, replace(x, ".lvl" => "")), 
+                         level_files))
+    store_files = filter(only_stores_pattern, readdir("blobs"))
+    store_ids = sort(map(x -> parse(Int64, replace(x, ".str" => "")), 
+                         store_files))
+    graph = Vector{Tuple{Int64, Int64}}()
+    for id in level_ids
+        level = LSMTree.get_level(LSMTree.Level{K, V}, id)
+        level.next_level[] > 0 && push!(graph, (id, level.next_level[]))
+    end
+    # Mark
+    levels = Vector{Int64}()
+    nodes = push!(store_ids, s.data.first_level[])
+    while !isempty(nodes)
+        n = pop!(nodes)
+        push!(levels, n)
+        for edge in filter(x -> first(x) == n, graph)
+            pushfirst!(nodes, last(edge))
+        end
+    end
+    # Sweep
+    files = filter(!only_stores_pattern, readdir("blobs"))
+    for i in levels
+        l = LSMTree.get_level(LSMTree.Level{K, V}, i)[]
+        for j in l.tables 
+            filter!(x -> x != "$j.tbl", files)
+            delete!(inmemory_tables, j)
+        end
+        filter!(x -> x != "$i.lvl", files)
+        delete!(inmemory_levels, i)
+    end
+    for f in files rm("blobs/$f", force=true) end
 end
 
 function compact(s::Store{K, V}) where {K, V}
@@ -128,7 +166,7 @@ function compact(s::Store{K, V}) where {K, V}
     if isnothing(current)
         new_level = Blobs.malloc_and_init(Level{K, V}, 
                                           Vector{Int64}(),
-                                          Vector{Int64}(), 
+                                          Vector{V}(), 
                                           0, 
                                           s.buffer.max_size * s.data.fanout[], 
                                           s.data.table_threshold_size[])
@@ -141,7 +179,7 @@ function compact(s::Store{K, V}) where {K, V}
         last_level = isnothing(next) ? current : next
         new_level = Blobs.malloc_and_init(Level{K, V},
                                           Vector{Int64}(),
-                                          Vector{Int64}(), 
+                                          Vector{V}(), 
                                           0,
                                           last_level.size[] * s.data.fanout[], 
                                           s.data.table_threshold_size[])
@@ -165,12 +203,14 @@ function compact(s::Store{K, V}) where {K, V}
         # TODO use different id
         current = empty(current)
         current.next_level[] = next.id[]
+        next.prev_level[] = current.id[]
         set_level(current)
         after_next = next
         next = current
         current = get_level(Level{K, V}, current.prev_level[])
         force_remove = false
     end
+    gc(s)
 end
 
 function snapshot(s::Store{K, V}) where {K, V}

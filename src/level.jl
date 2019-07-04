@@ -60,7 +60,6 @@ function empty(l::Blob{Level{K, V}}) where {K, V}
                                 Vector{K}(), 0, 
                                 l.max_size[], 
                                 l.table_threshold_size[])
-    res.id[] = l.id[]
     res.prev_level[] = l.prev_level[]
     res.next_level[] = l.next_level[]
     return res
@@ -111,8 +110,8 @@ end
 function compact(l::Blob{Level{K, V}},
                  t::Blob{Table{K, V}},
                  force_remove) where {K, V}
-    indecies = partition(l.bounds[], t.entries[])
-    return merge(l, t.entries[], indecies, force_remove)
+    indices = partition(l.bounds[], t.entries[])
+    return merge(l, t.entries[], indices, force_remove)
 end
 
 function Base.merge(l::Blob{Level{K, V}},
@@ -189,24 +188,24 @@ end
 # Returns indices
 function partition(bounds::BlobVector{K}, 
                    entries::BlobVector{Entry{K, V}}) where {K, V}
-    indecies, i, j = Vector{Int64}(), 1, 1
-    push!(indecies, 0)
-    while i <= length(entries) && length(indecies) < length(bounds) + 1
+    indices, i, j = Vector{Int64}(), 1, 1
+    push!(indices, 0)
+    while i <= length(entries) && length(indices) < length(bounds) + 1
         if entries[i].key[] > bounds[j]
             j += 1
             while j <= length(bounds) && entries[i].key[] > bounds[j]
-                push!(indecies, i - 1)
+                push!(indices, i - 1)
                 j += 1
             end
-            push!(indecies, i - 1)
+            push!(indices, i - 1)
         end
         i += 1
     end
-    while length(indecies) < length(bounds) + 1
-        push!(indecies, i - 1)
+    while length(indices) < length(bounds) + 1
+        push!(indices, i - 1)
     end
-    push!(indecies, length(entries))
-    return indecies
+    push!(indices, length(entries))
+    return indices
 end
 
 function key_table_index(l::Level{K, V}, k::K) where {K, V}

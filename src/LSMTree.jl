@@ -58,6 +58,8 @@ include("store.jl")
 export get, 
        put!,
        delete!,
+       snapshot,
+       restore,
        iter_init, 
        iter_next 
     
