@@ -5,20 +5,29 @@ struct Table{K, V}
 end
 
 inmemory_tables = Dict{Int64, Blob}()
+tables_queue = Vector{Int64}()
 
 Base.length(t::Table) = t.size[]
 Base.min(t::Table) = t.entries[1].key[]
 Base.max(t::Table) = t.entries[t.size].key[]
 
-function create_id(::Type{Table})
-    length(inmemory_tables) == 0 && return 1
-    return reverse(sort(collect(keys(inmemory_tables))))[1] + 1
+function generate_id(::Type{Table})
+    only_tables_pattern = x -> occursin(r"([0-9])+(.tbl)$", x)
+    file_names = filter(only_tables_pattern, readdir("db"))
+    length(file_names) == 0 && return 1
+    return findmax(map(x -> parse(Int64, replace(x, ".tbl" => "")), 
+                         file_names))[1] + 1
 end
 
 function get_table(::Type{Table{K, V}}, id::Int64) where {K, V}
     id <= 0 && return nothing
-    haskey(inmemory_tables, id) && return inmemory_tables[id]
-    path = "blobs/$id.tbl"
+    if in(id, tables_queue)
+       index = findfirst(x -> x == id, tables_queue) 
+       deleteat!(tables_queue, index)
+       pushfirst!(tables_queue, id)
+       return inmemory_tables[id]
+    end
+    path = "db/$id.tbl"
     if isfile(path)
         open(path) do f
             size = filesize(f)
@@ -27,14 +36,16 @@ function get_table(::Type{Table{K, V}}, id::Int64) where {K, V}
             unsafe_read(f, p, size)
             inmemory_tables[b.id[]] = b
         end
+        pushfirst!(tables_queue, id)
+        length(tables_queue) > 10 && delete!(inmemory_tables, 
+                                             pop!(tables_queue))
         return inmemory_tables[id]
     end
-    nothing
+    error("Table does not exist! (path=$path)")
 end
 
 function set_table(t::Blob{Table{K, V}}) where {K, V}
-    inmemory_tables[t.id[]] = t
-    open("blobs/$(t.id[]).tbl", "w+") do file
+    open("db/$(t.id[]).tbl", "w+") do file
         unsafe_write(file, pointer(t), getfield(t, :limit))
     end
 end
@@ -54,7 +65,7 @@ function Blobs.init(l::Blob{Table{K, V}},
         l.entries[i].val[] = entries[i].val
         l.entries[i].deleted[] = entries[i].deleted
     end
-    l.id[] = create_id(Table)
+    l.id[] = generate_id(Table)
     l.size[] = length(entries)
     free
 end

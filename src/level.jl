@@ -37,7 +37,7 @@ function Blobs.init(l::Blob{Level{K, V}},
     for i in 1:length(result_bounds)
         l.bounds[i][] = result_bounds[i]
     end
-    l.id[] = create_id(Level)
+    l.id[] = generate_id(Level)
     l.size[] = size
     l.max_size[] = max_size
     l.table_threshold_size[] = table_threshold_size
@@ -49,7 +49,7 @@ isfull(l::Level) = l.size >= l.max_size
 islast(l::Level) = l.next_level <= 0
 isfirst(l::Level) = l.prev_level <= 0
 
-function create_id(::Type{Level}) 
+function generate_id(::Type{Level}) 
     length(inmemory_levels) == 0 && return 1
     return reverse(sort(collect(keys(inmemory_levels))))[1] + 1
 end
@@ -62,13 +62,29 @@ function empty(l::Blob{Level{K, V}}) where {K, V}
                                 l.table_threshold_size[])
     res.prev_level[] = l.prev_level[]
     res.next_level[] = l.next_level[]
-    return res
+    res
+end
+
+function copy(l::Blob{Level{K, V}}) where {K, V}
+    tables = Vector{Int64}()
+    bounds = Vector{K}()
+    for t in l.tables[] push!(tables, t) end
+    for b in l.bounds[] push!(bounds, b) end
+    res = Blobs.malloc_and_init(Level{K, V}, 
+                                tables, 
+                                bounds,
+                                l.size[],
+                                l.max_size[], 
+                                l.table_threshold_size[])
+    res.prev_level[] = l.prev_level[]
+    res.next_level[] = l.next_level[]
+    res
 end
 
 function get_level(::Type{Level{K, V}}, id::Int64) where {K, V}
     id <= 0 && return nothing
     haskey(inmemory_levels, id) && return inmemory_levels[id]
-    path = "blobs/$id.lvl"
+    path = "db/$id.lvl"
     if isfile(path)
         open(path) do f
             size = filesize(f)
@@ -84,7 +100,7 @@ end
 
 function set_level(l::Blob{Level{K, V}}) where {K, V}
     inmemory_levels[l.id[]] = l
-    open("blobs/$(l.id[]).lvl", "w+") do file
+    open("db/$(l.id[]).lvl", "w+") do file
         unsafe_write(file, pointer(l), getfield(l, :limit))
     end
 end

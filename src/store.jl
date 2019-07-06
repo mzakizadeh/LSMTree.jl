@@ -28,9 +28,9 @@ mutable struct Store{K, V}
     buffer::Buffer{K, V}
     data::Blob{StoreData{K, V}}
     function Store{K, V}(buffer_max_size::Integer=125000, 
-                         table_threshold_size = 125000) where {K, V} 
+                         table_threshold_size::Integer=125000) where {K, V} 
         # TODO get path as an input
-        mkpath("blobs")
+        mkpath("db")
         data = Blobs.malloc_and_init(StoreData{K, V}, 2, 
                                      buffer_max_size * 2, 
                                      table_threshold_size)
@@ -49,7 +49,7 @@ function Base.length(s::Store{K, V}) where {K, V}
         len += l.size[] 
         l = get_level(Level{K, V}, l.next_level[])
     end
-    return len
+    len
 end
 
 function Base.get(s::Store{K, V}, key) where {K, V}
@@ -74,14 +74,26 @@ end
 function buffer_dump(s::Store{K, V}) where {K, V}
     s.buffer.size <= 0 && return
     compact(s)
+    gc(s)
     first_level = get_level(Level{K, V}, s.data.first_level[])
     entries = to_blob(s.buffer)
     indices = partition(first_level.bounds[], entries[])
     l = merge(first_level, entries[], indices, true)
-    # TODO don't mutate level
-    next = get_level(Level{K, V}, l.next_level[])
-    if !isnothing(next) next.prev_level[] = l.id[] end
     set_level(l)
+    # TODO don't mutate level
+    current = l
+    next = get_level(Level{K, V}, l.next_level[])
+    while !isnothing(next) 
+        next = copy(next)
+        current = copy(current)
+        # TODO fix generating id problem when we didn't call set_level
+        next.prev_level[] = current.id[] 
+        current.next_level[] = next.id[]
+        set_level(current)
+        set_level(next)
+        current = next
+        next = get_level(Level{K, V}, next.next_level[])
+    end
     s.data.first_level[] = l.id[]
     empty!(s.buffer)
 end
@@ -103,7 +115,7 @@ function Base.delete!(s::Store, key)
 end
 
 function Base.delete!(s::Store)
-    rm("blobs", recursive=true, force=true)
+    rm("db", recursive=true, force=true)
     empty!(inmemory_levels)
     empty!(inmemory_tables)
 end
@@ -111,10 +123,10 @@ end
 function gc(s::Store{K, V}) where {K, V}
     only_levels_pattern = x -> occursin(r"([0-9])+(.lvl)$", x)
     only_stores_pattern = x -> occursin(r"([0-9])+(.str)$", x)
-    level_files = filter(only_levels_pattern, readdir("blobs"))
+    level_files = filter(only_levels_pattern, readdir("db"))
     level_ids = sort(map(x -> parse(Int64, replace(x, ".lvl" => "")), 
                          level_files))
-    store_files = filter(only_stores_pattern, readdir("blobs"))
+    store_files = filter(only_stores_pattern, readdir("db"))
     store_ids = sort(map(x -> parse(Int64, replace(x, ".str" => "")), 
                          store_files))
     graph = Vector{Tuple{Int64, Int64}}()
@@ -133,17 +145,17 @@ function gc(s::Store{K, V}) where {K, V}
         end
     end
     # Sweep
-    files = filter(!only_stores_pattern, readdir("blobs"))
+    files = filter(!only_stores_pattern, readdir("db"))
     for i in levels
         l = LSMTree.get_level(LSMTree.Level{K, V}, i)[]
         for j in l.tables 
             filter!(x -> x != "$j.tbl", files)
-            delete!(inmemory_tables, j)
+            # delete!(inmemory_tables, j)
         end
         filter!(x -> x != "$i.lvl", files)
         delete!(inmemory_levels, i)
     end
-    for f in files rm("blobs/$f", force=true) end
+    for f in files rm("db/$f", force=true) end
 end
 
 function compact(s::Store{K, V}) where {K, V}
@@ -179,8 +191,7 @@ function compact(s::Store{K, V}) where {K, V}
         last_level = isnothing(next) ? current : next
         new_level = Blobs.malloc_and_init(Level{K, V},
                                           Vector{Int64}(),
-                                          Vector{V}(), 
-                                          0,
+                                          Vector{V}(), 0,
                                           last_level.size[] * s.data.fanout[], 
                                           s.data.table_threshold_size[])
         new_level.prev_level[] = last_level.id[]
@@ -199,31 +210,38 @@ function compact(s::Store{K, V}) where {K, V}
             next.next_level[] = after_next.id[]
             after_next.prev_level[] = next.id[]
         end
-        set_level(next)
-        # TODO use different id
+        current_isfirst = isfirst(current[])
         current = empty(current)
+        # TODO problem with generating new id
+        current.id[] += 1
         current.next_level[] = next.id[]
         next.prev_level[] = current.id[]
+        if current_isfirst s.data.first_level[] = current.id[] end
+        set_level(next)
         set_level(current)
         after_next = next
         next = current
         current = get_level(Level{K, V}, current.prev_level[])
         force_remove = false
     end
-    gc(s)
 end
 
 function snapshot(s::Store{K, V}) where {K, V}
     buffer_dump(s)
     # The id of first level is always unique
     # Therefore we also used it as store id
-    open("blobs/$(s.data.first_level[]).str", "w+") do file
+    open("db/$(s.data.first_level[]).str", "w+") do file
         unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
     end
+    snapshot = Blobs.malloc_and_init(StoreData{K, V}, s.data.fanout[], 
+                                     s.data.first_level_max_size[], 
+                                     s.data.table_threshold_size[])
+    snapshot.first_level[] = s.data.first_level[]
+    snapshot
 end
 
 function restore(::Type{K}, ::Type{V}, id::Int64) where {K, V}
-    path = "blobs/$id.str"
+    path = "db/$id.str"
     if isfile(path)
         s = missing
         open(path) do f
@@ -240,11 +258,11 @@ end
 
 struct Iterator{K, V}
     start::K
-    buffer_entries::Vector{Entry{K, V}}
     levels::Vector{Level{K, V}}
     function Iterator(s::Store{K, V}) where {K, V}
+        snapshot = LSMTree.snapshot(s)
         levels = Vector{Level{K, V}}()
-        l = get_level(Level{K, V}, s.data.first_level[])
+        l = get_level(Level{K, V}, snapshot.first_level[])
         while !isnothing(l)
             push!(levels, l[])
             l = get_level(Level{K, V}, l.next_level[])
@@ -252,23 +270,22 @@ struct Iterator{K, V}
         start = nothing
         for level in levels
             for t in level.tables
-                start = isnothing(start) ? min(get_table(Table{K, V}, t)[]) : min(start, min(get_table(Table{K, V}, t)[]))
+                start = isnothing(start) ? 
+                            min(get_table(Table{K, V}, t)[]) : 
+                            min(start, min(get_table(Table{K, V}, t)[]))
             end
         end
-        new{K, V}(start, 
-                  [last(p) for p in sort(collect(s.buffer.entries))], 
-                  levels)
+        new{K, V}(start, levels)
     end
-    function Iterator(s::Store{K, V}, start) where {K, V}
+    function Iterator(s::Store{K, V}, lub) where {K, V}
+        snapshot = LSMTree.snapshot(s)
         levels = Vector{Level{K, V}}()
-        l = get_level(Level{K, V}, s.data.first_level[])
+        l = get_level(Level{K, V}, snapshot.first_level[])
         while !isnothing(l)
             push!(levels, l[])
             l = get_level(Level{K, V}, l.next_level[])
         end
-        new{K, V}(convert(K, start), 
-                  [last(p) for p in sort(collect(s.buffer.entries))],  
-                  levels)
+        new{K, V}(convert(K, lub), levels)
     end
 end
 
@@ -280,7 +297,6 @@ mutable struct LevelIterationState{K, V}
 end
 
 mutable struct IterationState{K, V}
-    current_buffer_state::Int64
     current_levels_state::Vector{LevelIterationState{K, V}}
 end
 
@@ -298,8 +314,6 @@ function next_state(s::LevelIterationState{K, V}, l::Level{K, V}) where {K, V}
 end
 
 function iter_init(iter::Iterator{K, V}) where {K, V}
-    b = iter.buffer_entries
-    buffer_state = length(b) > 0 ? lub(b, 1, length(b), iter.start) : 0
     levels_state = Vector{LevelIterationState{K, V}}()
     for i in 1:length(iter.levels)
         table_index = key_table_index(iter.levels[i], iter.start)
@@ -311,33 +325,28 @@ function iter_init(iter::Iterator{K, V}) where {K, V}
                                                 entry_index,
                                                 length(iter.levels[i].tables) == 0))
     end
-    return (iter.start, IterationState{K, V}(buffer_state, levels_state))
+    return (iter.start, IterationState{K, V}(levels_state))
 end
 
 function iter_next(iter::Iterator, state)
-    element, iter_state = state
-    b = iter.buffer_entries
+    e, state = state
     next = nothing
     next_index = 0
     for i in 1:length(iter.levels)
-        if !iter_state.current_levels_state[i].done && (isnothing(next) || iter_state.current_levels_state[i].current_entry < next)
-            next = iter_state.current_levels_state[i].current_entry
+        if !state.current_levels_state[i].done && (isnothing(next) || state.current_levels_state[i].current_entry < next)
+            next = state.current_levels_state[i].current_entry
             next_index = i
         end
     end
-    if 0 < iter_state.current_buffer_state <= length(b) && (isnothing(next) || next == b[iter_state.current_buffer_state])
-       iter_state.current_buffer_state += 1 
-    else 
-        next_state(iter_state.current_levels_state[next_index], iter.levels[next_index]) 
-    end
-    return (element, (next, iter_state))
+    next_state(state.current_levels_state[next_index], iter.levels[next_index]) 
+    return (next, state)
 end
 
 function iter_done(iter::Iterator, state)
     _, iter_state = state
-    0 < iter_state.current_buffer_state <= length(iter.buffer_entries) && return false
     for level_state in iter_state.current_levels_state
         !level_state.done && return false
     end
+    # TODO remove snapshot and call gc
     true
 end
