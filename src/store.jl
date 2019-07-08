@@ -80,7 +80,6 @@ end
 function buffer_dump(s::Store{K, V}) where {K, V}
     s.buffer.size <= 0 && return
     compact(s)
-    gc(s)
 
     first_level = get_level(Level{K, V}, s.data.first_level[], s.inmemory)
     entries = to_blob(s.buffer)
@@ -92,17 +91,17 @@ function buffer_dump(s::Store{K, V}) where {K, V}
     next = get_level(Level{K, V}, l.next_level[], s.inmemory)
     while !isnothing(next) 
         next = copy(next, s.inmemory)
-        current = copy(current, s.inmemory)
-        # TODO fix generating id problem when we didn't call set_level
         next.prev_level[] = current.id[] 
         current.next_level[] = next.id[]
-        set_level(current, s.inmemory)
+
         set_level(next, s.inmemory)
+        set_level(current, s.inmemory)
         current = next
         next = get_level(Level{K, V}, next.next_level[], s.inmemory)
     end
 
     s.data.first_level[] = l.id[]
+    gc(s)
     empty!(s.buffer)
 end
 
@@ -125,6 +124,8 @@ end
 function Base.delete!(s::Store)
     rm(s.inmemory.path, recursive=true, force=true)
 end
+
+Base.close(s::Store) = snapshot(s) 
 
 function gc(s::Store{K, V}) where {K, V}
     only_levels_pattern = x -> occursin(r"([0-9])+(.lvl)$", x)
@@ -195,15 +196,17 @@ function compact(s::Store{K, V}) where {K, V}
     end
     # Create new level if we didn't find enough space in tree
     if isnothing(next) || isfull(next[])
-        last_level = isnothing(next) ? current : next
+        last_level = isnothing(next) ? copy(current, s.inmemory) : copy(next, s.inmemory)
         new_level = Blobs.malloc_and_init(Level{K, V},
                                           generate_id(Level, s.inmemory),
                                           Vector{Int64}(),
                                           Vector{V}(), 0,
                                           last_level.size[] * s.data.fanout[], 
                                           s.data.table_threshold_size[])
+        new_level.id[] += 1
         new_level.prev_level[] = last_level.id[]
         last_level.next_level[] = new_level.id[]
+        set_level(last_level, s.inmemory)
         set_level(new_level, s.inmemory)
         current, next = last_level, new_level
         force_remove = true
@@ -217,6 +220,7 @@ function compact(s::Store{K, V}) where {K, V}
         if !isnothing(after_next) 
             next.next_level[] = after_next.id[]
             after_next.prev_level[] = next.id[]
+            set_level(after_next, s.inmemory)
         end
         current_isfirst = isfirst(current[])
         current = empty(current, s.inmemory)

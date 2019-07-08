@@ -15,8 +15,11 @@ isfirst(l::Level) = l.prev_level <= 0
 
 # TODO write a better id generator
 function generate_id(::Type{Level}, s::InMemoryData) 
-    length(s.inmemory_levels) == 0 && return 1
-    return reverse(sort(collect(keys(s.inmemory_levels))))[1] + 1
+    only_tables_pattern = x -> occursin(r"([0-9])+(.lvl)$", x)
+    file_names = filter(only_tables_pattern, readdir(s.path))
+    length(file_names) == 0 && return 1
+    return findmax(map(x -> parse(Int64, replace(x, ".lvl" => "")), 
+                         file_names))[1] + 1
 end
 
 function Blobs.child_size(::Type{Level{K, V}}, 
