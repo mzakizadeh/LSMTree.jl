@@ -49,6 +49,17 @@ function Base.sizeof(v::Vector{Blob{Entry{K, V}}}) where {K, V}
     size
 end
 
+struct InMemoryData
+    path::String
+    tables_queue::Vector{Int64}
+    inmemory_tables::Dict{Int64, Blob}
+    inmemory_levels::Dict{Int64, Blob}
+    InMemoryData(path) = new(path, 
+                             Vector{Int64}(), 
+                             Dict{Int64, Blob}(), 
+                             Dict{Int64, Blob}())
+end
+
 include("bloom_filter.jl")
 include("table.jl")
 include("buffer.jl")

@@ -9,9 +9,18 @@ struct Level{K, V}
     tables::BlobVector{Int64}
 end
 
-inmemory_levels = Dict{Int64, Blob}()
+isfull(l::Level) = l.size >= l.max_size
+islast(l::Level) = l.next_level <= 0
+isfirst(l::Level) = l.prev_level <= 0
+
+# TODO write a better id generator
+function generate_id(::Type{Level}, s::InMemoryData) 
+    length(s.inmemory_levels) == 0 && return 1
+    return reverse(sort(collect(keys(s.inmemory_levels))))[1] + 1
+end
 
 function Blobs.child_size(::Type{Level{K, V}}, 
+                          id::Int64,
                           result_tables::Vector{Int64},
                           result_bounds::Vector{K},
                           size::Int64,
@@ -24,6 +33,7 @@ end
 
 function Blobs.init(l::Blob{Level{K, V}},
                     free::Blob{Nothing},
+                    id::Int64,
                     result_tables::Vector{Int64},
                     result_bounds::Vector{K},
                     size::Int64,
@@ -37,7 +47,7 @@ function Blobs.init(l::Blob{Level{K, V}},
     for i in 1:length(result_bounds)
         l.bounds[i][] = result_bounds[i]
     end
-    l.id[] = generate_id(Level)
+    l.id[] = id
     l.size[] = size
     l.max_size[] = max_size
     l.table_threshold_size[] = table_threshold_size
@@ -45,17 +55,9 @@ function Blobs.init(l::Blob{Level{K, V}},
     free
 end
 
-isfull(l::Level) = l.size >= l.max_size
-islast(l::Level) = l.next_level <= 0
-isfirst(l::Level) = l.prev_level <= 0
-
-function generate_id(::Type{Level}) 
-    length(inmemory_levels) == 0 && return 1
-    return reverse(sort(collect(keys(inmemory_levels))))[1] + 1
-end
-
-function empty(l::Blob{Level{K, V}}) where {K, V}
+function empty(l::Blob{Level{K, V}}, s::InMemoryData) where {K, V}
     res = Blobs.malloc_and_init(Level{K, V}, 
+                                generate_id(Level, s),
                                 Vector{Int64}(), 
                                 Vector{K}(), 0, 
                                 l.max_size[], 
@@ -65,12 +67,13 @@ function empty(l::Blob{Level{K, V}}) where {K, V}
     res
 end
 
-function copy(l::Blob{Level{K, V}}) where {K, V}
+function copy(l::Blob{Level{K, V}}, s::InMemoryData) where {K, V}
     tables = Vector{Int64}()
     bounds = Vector{K}()
     for t in l.tables[] push!(tables, t) end
     for b in l.bounds[] push!(bounds, b) end
     res = Blobs.malloc_and_init(Level{K, V}, 
+                                generate_id(Level, s),
                                 tables, 
                                 bounds,
                                 l.size[],
@@ -81,26 +84,26 @@ function copy(l::Blob{Level{K, V}}) where {K, V}
     res
 end
 
-function get_level(::Type{Level{K, V}}, id::Int64) where {K, V}
+function get_level(::Type{Level{K, V}}, id::Int64, s::InMemoryData) where {K, V}
     id <= 0 && return nothing
-    haskey(inmemory_levels, id) && return inmemory_levels[id]
-    path = "db/$id.lvl"
+    haskey(s.inmemory_levels, id) && return s.inmemory_levels[id]
+    path = "$(s.path)/$id.lvl"
     if isfile(path)
         open(path) do f
             size = filesize(f)
             p = Libc.malloc(size)
             b = Blob{Level{K, V}}(p, 0, size)
             unsafe_read(f, p, size)
-            inmemory_levels[b.id[]] = b
+            s.inmemory_levels[b.id[]] = b
         end
-        return inmemory_levels[id]
+        return s.inmemory_levels[id]
     end
     nothing
 end
 
-function set_level(l::Blob{Level{K, V}}) where {K, V}
-    inmemory_levels[l.id[]] = l
-    open("db/$(l.id[]).lvl", "w+") do file
+function set_level(l::Blob{Level{K, V}}, s::InMemoryData) where {K, V}
+    s.inmemory_levels[l.id[]] = l
+    open("$(s.path)/$(l.id[]).lvl", "w+") do file
         unsafe_write(file, pointer(l), getfield(l, :limit))
     end
 end
@@ -111,26 +114,28 @@ function Base.length(l::Level)
     len
 end
 
-function Base.get(l::Level{K, V}, key::K) where {K, V} 
+function Base.get(l::Level{K, V}, key::K, s::InMemoryData) where {K, V} 
     # if isset(l.bf, key)
         for i in 1:length(l.tables)
-            i == length(l.tables) && return get(get_table(Table{K, V}, l.tables[i])[], key)
+            i == length(l.tables) && return get(get_table(Table{K, V}, l.tables[i], s)[], key)
             if key <= l.bounds[i]
-                return get(get_table(Table{K, V}, l.tables[i])[], key)
+                return get(get_table(Table{K, V}, l.tables[i], s)[], key)
             end
         end
     # else return nothing end
     nothing
 end
 
-function compact(l::Blob{Level{K, V}},
+function compact(s::InMemoryData,
+                 l::Blob{Level{K, V}},
                  t::Blob{Table{K, V}},
                  force_remove) where {K, V}
     indices = partition(l.bounds[], t.entries[])
-    return merge(l, t.entries[], indices, force_remove)
+    return merge(s, l, t.entries[], indices, force_remove)
 end
 
-function Base.merge(l::Blob{Level{K, V}},
+function Base.merge(s::InMemoryData,
+                    l::Blob{Level{K, V}},
                     e::BlobVector{Entry{K, V}},
                     indices::Vector{Int64}, 
                     force_remove) where {K, V}
@@ -138,7 +143,8 @@ function Base.merge(l::Blob{Level{K, V}},
     # If level has no table
     if length(indices) < 3
         if length(l.tables[]) > 0
-            table = merge(get_table(Table{K, V}, l.tables[1][]), 
+            table = merge(s, 
+                          get_table(Table{K, V}, l.tables[1][], s), 
                           e, 
                           indices[1], 
                           indices[2], 
@@ -148,39 +154,42 @@ function Base.merge(l::Blob{Level{K, V}},
             for i in 1:length(e)
                 push!(entries, e[i])
             end
-            table = Blobs.malloc_and_init(Table{K, V}, entries)
+            table = Blobs.malloc_and_init(Table{K, V}, 
+                                          generate_id(Table, s), 
+                                          entries)
         end
         if table.size[] > l.table_threshold_size[]
-            (t1, t2) = split(table)
-            set_table(t1)
+            (t1, t2) = split(table, s)
+            set_table(t1, s)
             push!(result_tables, t1.id[])
             push!(result_bounds, max(t1[]))
-            set_table(t2)
+            set_table(t2, s)
             push!(result_tables, t2.id[])
             push!(result_bounds, max(t2[]))
         else
-            set_table(table)
+            set_table(table, s)
             push!(result_tables, table.id[])
             push!(result_bounds, max(table[]))
         end
     else
         for i in 1:length(l.tables[])
             if indices[i + 1] - indices[i] > 0
-                table = merge(get_table(Table{K, V}, l.tables[i][]), 
+                table = merge(s, 
+                              get_table(Table{K, V}, l.tables[i][], s), 
                               e, 
                               indices[i], 
                               indices[i + 1], 
                               false)
                 if table.size[] > l.table_threshold_size[]
-                    (t1, t2) = split(table)
-                    set_table(t1)
+                    (t1, t2) = split(table, s)
+                    set_table(t1, s)
                     push!(result_tables, t1.id[])
                     push!(result_bounds, max(t1[]))
-                    set_table(t2)
+                    set_table(t2, s)
                     push!(result_tables, t2.id[])
                     push!(result_bounds, max(t2[]))
                 else
-                    set_table(table)
+                    set_table(table, s)
                     push!(result_tables, table.id[])
                     push!(result_bounds, max(table[]))
                 end
@@ -192,6 +201,7 @@ function Base.merge(l::Blob{Level{K, V}},
     end
     pop!(result_bounds)
     res = Blobs.malloc_and_init(Level{K, V}, 
+                                generate_id(Level, s),
                                 result_tables, 
                                 result_bounds,
                                 l.size[] + length(e),

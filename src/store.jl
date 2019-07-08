@@ -27,27 +27,33 @@ end
 mutable struct Store{K, V}
     buffer::Buffer{K, V}
     data::Blob{StoreData{K, V}}
-    function Store{K, V}(buffer_max_size::Integer=125000, 
+    inmemory::InMemoryData
+    function Store{K, V}(path::String="./db",
+                         buffer_max_size::Integer=125000, 
                          table_threshold_size::Integer=125000) where {K, V} 
-        # TODO get path as an input
-        mkpath("db")
+        @assert !isdir(path) "Directory already exists! Try using restore function."
+        mkpath(path)
         data = Blobs.malloc_and_init(StoreData{K, V}, 2, 
                                      buffer_max_size * 2, 
                                      table_threshold_size)
-        new{K, V}(Buffer{K, V}(buffer_max_size), data)
+        new{K, V}(Buffer{K, V}(buffer_max_size), 
+                  data,
+                  InMemoryData(path))
     end
-    Store{K, V}(data::Blob{StoreData{K, V}}) where {K, V} =
-        new{K, V}(Buffer{K, V}(floor(Int64, data.first_level_max_size[] / 2)), data)
+    Store{K, V}(path::String, data::Blob{StoreData{K, V}}) where {K, V} =
+        new{K, V}(Buffer{K, V}(floor(Int64, data.first_level_max_size[] / 2)), 
+                  data,
+                  InMemoryData(path))
 end
 
 Base.isempty(s::StoreData{K, V}) where {K, V} = s.first_level <= 0
 
 function Base.length(s::Store{K, V}) where {K, V}
     len = length(s.buffer.entries)
-    l = get_level(Level{K, V}, s.data.first_level[])
+    l = get_level(Level{K, V}, s.data.first_level[], s.inmemory)
     while !isnothing(l) 
         len += l.size[] 
-        l = get_level(Level{K, V}, l.next_level[])
+        l = get_level(Level{K, V}, l.next_level[], s.inmemory)
     end
     len
 end
@@ -59,14 +65,14 @@ function Base.get(s::Store{K, V}, key) where {K, V}
         result.deleted && return nothing
         return result.val
     end
-    l = get_level(Level{K, V}, s.data.first_level[])
+    l = get_level(Level{K, V}, s.data.first_level[], s.inmemory)
     while !isnothing(l)
-        result = get(l[], key)
+        result = get(l[], key, s.inmemory)
         if !isnothing(result)
             result.deleted && return nothing
             return result.val
         end
-        l = get_level(Level{K, V}, l.next_level[])
+        l = get_level(Level{K, V}, l.next_level[], s.inmemory)
     end
     nothing
 end
@@ -75,25 +81,27 @@ function buffer_dump(s::Store{K, V}) where {K, V}
     s.buffer.size <= 0 && return
     compact(s)
     gc(s)
-    first_level = get_level(Level{K, V}, s.data.first_level[])
+
+    first_level = get_level(Level{K, V}, s.data.first_level[], s.inmemory)
     entries = to_blob(s.buffer)
     indices = partition(first_level.bounds[], entries[])
-    l = merge(first_level, entries[], indices, true)
-    set_level(l)
-    # TODO don't mutate level
+    l = merge(s.inmemory, first_level, entries[], indices, true)
+    set_level(l, s.inmemory)
+
     current = l
-    next = get_level(Level{K, V}, l.next_level[])
+    next = get_level(Level{K, V}, l.next_level[], s.inmemory)
     while !isnothing(next) 
-        next = copy(next)
-        current = copy(current)
+        next = copy(next, s.inmemory)
+        current = copy(current, s.inmemory)
         # TODO fix generating id problem when we didn't call set_level
         next.prev_level[] = current.id[] 
         current.next_level[] = next.id[]
-        set_level(current)
-        set_level(next)
+        set_level(current, s.inmemory)
+        set_level(next, s.inmemory)
         current = next
-        next = get_level(Level{K, V}, next.next_level[])
+        next = get_level(Level{K, V}, next.next_level[], s.inmemory)
     end
+
     s.data.first_level[] = l.id[]
     empty!(s.buffer)
 end
@@ -115,23 +123,21 @@ function Base.delete!(s::Store, key)
 end
 
 function Base.delete!(s::Store)
-    rm("db", recursive=true, force=true)
-    empty!(inmemory_levels)
-    empty!(inmemory_tables)
+    rm(s.inmemory.path, recursive=true, force=true)
 end
 
 function gc(s::Store{K, V}) where {K, V}
     only_levels_pattern = x -> occursin(r"([0-9])+(.lvl)$", x)
     only_stores_pattern = x -> occursin(r"([0-9])+(.str)$", x)
-    level_files = filter(only_levels_pattern, readdir("db"))
+    level_files = filter(only_levels_pattern, readdir(s.inmemory.path))
     level_ids = sort(map(x -> parse(Int64, replace(x, ".lvl" => "")), 
                          level_files))
-    store_files = filter(only_stores_pattern, readdir("db"))
+    store_files = filter(only_stores_pattern, readdir(s.inmemory.path))
     store_ids = sort(map(x -> parse(Int64, replace(x, ".str" => "")), 
                          store_files))
     graph = Vector{Tuple{Int64, Int64}}()
     for id in level_ids
-        level = LSMTree.get_level(LSMTree.Level{K, V}, id)
+        level = LSMTree.get_level(LSMTree.Level{K, V}, id, s.inmemory)
         level.next_level[] > 0 && push!(graph, (id, level.next_level[]))
     end
     # Mark
@@ -145,44 +151,45 @@ function gc(s::Store{K, V}) where {K, V}
         end
     end
     # Sweep
-    files = filter(!only_stores_pattern, readdir("db"))
+    files = filter(!only_stores_pattern, readdir(s.inmemory.path))
     for i in levels
-        l = LSMTree.get_level(LSMTree.Level{K, V}, i)[]
+        l = LSMTree.get_level(LSMTree.Level{K, V}, i, s.inmemory)[]
         for j in l.tables 
             filter!(x -> x != "$j.tbl", files)
             # delete!(inmemory_tables, j)
         end
         filter!(x -> x != "$i.lvl", files)
-        delete!(inmemory_levels, i)
+        delete!(s.inmemory.inmemory_levels, i)
     end
-    for f in files rm("db/$f", force=true) end
+    for f in files rm("$(s.inmemory.path)/$f", force=true) end
 end
 
 function compact(s::Store{K, V}) where {K, V}
     # Return if first level has enough empty space
-    !isempty(s.data[]) && !isfull(get_level(Level{K, V}, s.data.first_level[])[]) && return
+    !isempty(s.data[]) && !isfull(get_level(Level{K, V}, s.data.first_level[], s.inmemory)[]) && return
     # Find first level that has enough empty space
-    current = get_level(Level{K, V}, s.data.first_level[])
+    current = get_level(Level{K, V}, s.data.first_level[], s.inmemory)
     next = !isnothing(current) ? 
-                    get_level(Level{K, V}, current.next_level[]) : nothing
+                    get_level(Level{K, V}, current.next_level[], s.inmemory) : nothing
     force_remove = false
     while !isnothing(next) && !islast(next[])
         if !isfull(next[])
             force_remove = islast(next[])
             break
         end
-        current = get_level(Level{K, V}, current.next_level[]) 
-        next = get_level(Level{K, V}, next.next_level[])
+        current = get_level(Level{K, V}, current.next_level[], s.inmemory) 
+        next = get_level(Level{K, V}, next.next_level[], s.inmemory)
     end
     # Create and return new level if tree has no level
     if isnothing(current)
         new_level = Blobs.malloc_and_init(Level{K, V}, 
+                                          generate_id(Level, s.inmemory),
                                           Vector{Int64}(),
                                           Vector{V}(), 
                                           0, 
                                           s.buffer.max_size * s.data.fanout[], 
                                           s.data.table_threshold_size[])
-        set_level(new_level)
+        set_level(new_level, s.inmemory)
         s.data.first_level[] = new_level.id[]
         return
     end
@@ -190,38 +197,39 @@ function compact(s::Store{K, V}) where {K, V}
     if isnothing(next) || isfull(next[])
         last_level = isnothing(next) ? current : next
         new_level = Blobs.malloc_and_init(Level{K, V},
+                                          generate_id(Level, s.inmemory),
                                           Vector{Int64}(),
                                           Vector{V}(), 0,
                                           last_level.size[] * s.data.fanout[], 
                                           s.data.table_threshold_size[])
         new_level.prev_level[] = last_level.id[]
         last_level.next_level[] = new_level.id[]
-        set_level(new_level)
+        set_level(new_level, s.inmemory)
         current, next = last_level, new_level
         force_remove = true
     end
     # Compact levels and free up space in first level
-    after_next = get_level(Level{K, V}, next.next_level[])
+    after_next = get_level(Level{K, V}, next.next_level[], s.inmemory)
     while !isfirst(next[]) 
         for table in current.tables[]
-            next = compact(next, get_table(Table{K, V}, table), force_remove)
+            next = compact(s.inmemory, next, get_table(Table{K, V}, table, s.inmemory), force_remove)
         end
         if !isnothing(after_next) 
             next.next_level[] = after_next.id[]
             after_next.prev_level[] = next.id[]
         end
         current_isfirst = isfirst(current[])
-        current = empty(current)
+        current = empty(current, s.inmemory)
         # TODO problem with generating new id
         current.id[] += 1
         current.next_level[] = next.id[]
         next.prev_level[] = current.id[]
         if current_isfirst s.data.first_level[] = current.id[] end
-        set_level(next)
-        set_level(current)
+        set_level(next, s.inmemory)
+        set_level(current, s.inmemory)
         after_next = next
         next = current
-        current = get_level(Level{K, V}, current.prev_level[])
+        current = get_level(Level{K, V}, current.prev_level[], s.inmemory)
         force_remove = false
     end
 end
@@ -230,7 +238,7 @@ function snapshot(s::Store{K, V}) where {K, V}
     buffer_dump(s)
     # The id of first level is always unique
     # Therefore we also used it as store id
-    open("db/$(s.data.first_level[]).str", "w+") do file
+    open("$(s.inmemory.path)/$(s.data.first_level[]).str", "w+") do file
         unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
     end
     snapshot = Blobs.malloc_and_init(StoreData{K, V}, s.data.fanout[], 
@@ -240,8 +248,8 @@ function snapshot(s::Store{K, V}) where {K, V}
     snapshot
 end
 
-function restore(::Type{K}, ::Type{V}, id::Int64) where {K, V}
-    path = "db/$id.str"
+function restore(::Type{K}, ::Type{V}, path::String, id::Int64) where {K, V}
+    path = "$path/$id.str"
     if isfile(path)
         s = missing
         open(path) do f
@@ -262,10 +270,10 @@ struct Iterator{K, V}
     function Iterator(s::Store{K, V}) where {K, V}
         snapshot = LSMTree.snapshot(s)
         levels = Vector{Level{K, V}}()
-        l = get_level(Level{K, V}, snapshot.first_level[])
+        l = get_level(Level{K, V}, snapshot.first_level[], s.inmemory)
         while !isnothing(l)
             push!(levels, l[])
-            l = get_level(Level{K, V}, l.next_level[])
+            l = get_level(Level{K, V}, l.next_level[], s.inmemory)
         end
         start = nothing
         for level in levels
@@ -280,10 +288,10 @@ struct Iterator{K, V}
     function Iterator(s::Store{K, V}, lub) where {K, V}
         snapshot = LSMTree.snapshot(s)
         levels = Vector{Level{K, V}}()
-        l = get_level(Level{K, V}, snapshot.first_level[])
+        l = get_level(Level{K, V}, snapshot.first_level[], s.inmemory)
         while !isnothing(l)
             push!(levels, l[])
-            l = get_level(Level{K, V}, l.next_level[])
+            l = get_level(Level{K, V}, l.next_level[], s.inmemory)
         end
         new{K, V}(convert(K, lub), levels)
     end
