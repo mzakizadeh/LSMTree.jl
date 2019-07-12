@@ -35,7 +35,7 @@ function get_table(::Type{Table{K, V}}, id::Int64, s::InMemoryData) where {K, V}
             s.inmemory_tables[b.id[]] = b
         end
         pushfirst!(s.tables_queue, id)
-        length(s.tables_queue) > 10 && delete!(s.inmemory_tables, 
+        length(s.tables_queue) > 100 && delete!(s.inmemory_tables, 
                                              pop!(s.tables_queue))
         return s.inmemory_tables[id]
     end
