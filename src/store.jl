@@ -126,7 +126,16 @@ function Base.delete!(s::Store)
     rm(s.inmemory.path, recursive=true, force=true)
 end
 
-Base.close(s::Store) = snapshot(s) 
+function Base.close(s::Store{K, V}) where {K, V}
+    buffer_dump(s)
+    # The id of first level is always unique
+    # Therefore we also used it as store id
+    open("$(s.inmemory.path)/$(s.data.first_level[]).str", "w+") do file
+        unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
+    end
+    print("LSMTree.Store{$K, $V} with id $(s.data.first_level[]) closed")
+    Blobs.free(s.data)
+end
 
 function gc(s::Store{K, V}) where {K, V}
     only_levels_pattern = x -> occursin(r"([0-9])+(.lvl)$", x)
