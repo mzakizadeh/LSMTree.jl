@@ -1,29 +1,3 @@
-struct StoreData{K, V}
-    first_level::Int64
-    fanout::Int64
-    first_level_max_size::Int64
-    table_threshold_size::Int64
-end
-
-function Blobs.child_size(::Type{StoreData{K, V}}, 
-                          fanout::Int64, 
-                          first_level_max_size::Int64, 
-                          table_threshold_size::Int64) where {K, V}
-    +(0)
-end
-
-function Blobs.init(bf::Blob{StoreData{K, V}}, 
-                    free::Blob{Nothing},
-                    fanout::Int64, 
-                    first_level_max_size::Int64, 
-                    table_threshold_size::Int64) where {K, V}
-    bf.first_level[] = -1
-    bf.fanout[] = fanout
-    bf.first_level_max_size[] = first_level_max_size
-    bf.table_threshold_size[] = table_threshold_size
-    free
-end
-
 mutable struct Store{K, V}
     buffer::Buffer{K, V}
     data::Blob{StoreData{K, V}}
@@ -59,25 +33,6 @@ function Base.length(s::Store{K, V}) where {K, V}
     len
 end
 
-function Base.get(s::Store{K, V}, key) where {K, V}
-    key = convert(K, key) 
-    result = get(s.buffer, key)
-    if !isnothing(result) 
-        result.deleted && return nothing
-        return result.val
-    end
-    l = get_level(Level{K, V}, s.data.first_level[], s.inmemory)
-    while !isnothing(l)
-        result = get(l[], key, s.inmemory)
-        if !isnothing(result)
-            result.deleted && return nothing
-            return result.val
-        end
-        l = get_level(Level{K, V}, l.next_level[], s.inmemory)
-    end
-    nothing
-end
-
 function buffer_dump(s::Store{K, V}) where {K, V}
     s.buffer.size <= 0 && return
     compact(s)
@@ -106,35 +61,8 @@ function buffer_dump(s::Store{K, V}) where {K, V}
     empty!(s.buffer)
 end
 
-function Base.put!(s::Store{K, V}, key, val, deleted=false) where {K, V}
-    key = convert(K, key)
-    val = convert(V, val)
-    put!(s.buffer, key, val, deleted)
-    isfull(s.buffer) && buffer_dump(s)
-end
-
-Base.setindex!(s::Store{K, V}, val, key) where {K, V} = put!(s, key, val)
-Base.getindex(s::Store{K, V}, key) where {K, V} = get(s, key)
-
-# TODO delete key without getting the value
-function Base.delete!(s::Store, key)
-    val = get(s, key)
-    put!(s, key, val, true)
-end
-
 function Base.delete!(s::Store)
     rm(s.inmemory.path, recursive=true, force=true)
-end
-
-function Base.close(s::Store{K, V}) where {K, V}
-    buffer_dump(s)
-    # The id of first level is always unique
-    # Therefore we also used it as store id
-    open("$(s.inmemory.path)/$(s.data.first_level[]).str", "w+") do file
-        unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
-    end
-    print("LSMTree.Store{$K, $V} with id $(s.data.first_level[]) closed")
-    Blobs.free(s.data)
 end
 
 function gc(s::Store{K, V}) where {K, V}
@@ -246,145 +174,4 @@ function compact(s::Store{K, V}) where {K, V}
         current = get_level(Level{K, V}, current.prev_level[], s.inmemory)
         force_remove = false
     end
-end
-
-function snapshot(s::Store{K, V}) where {K, V}
-    buffer_dump(s)
-    # The id of first level is always unique
-    # Therefore we also used it as store id
-    open("$(s.inmemory.path)/$(s.data.first_level[]).str", "w+") do file
-        unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
-    end
-    snapshot = Blobs.malloc_and_init(StoreData{K, V}, s.data.fanout[], 
-                                     s.data.first_level_max_size[], 
-                                     s.data.table_threshold_size[])
-    snapshot.first_level[] = s.data.first_level[]
-    snapshot
-end
-
-function restore(::Type{K}, ::Type{V}, path::String, id::Int64) where {K, V}
-    file = "$path/$id.str"
-    if isfile(file)
-        s = missing
-        open(file) do f
-            size = filesize(f)
-            p = Libc.malloc(size)
-            b = Blob{StoreData{K, V}}(p, 0, size) 
-            unsafe_read(f, p, size)
-            s = Store{K, V}(path, b)
-        end
-        return s
-    end
-    nothing
-end
-
-struct Iterator{K, V}
-    levels::Vector{Level{K, V}}
-    store::Store{K, V}
-    function Iterator(s::Store{K, V}) where {K, V}
-        snapshot = LSMTree.snapshot(s)
-        levels = Vector{Level{K, V}}()
-        l = get_level(Level{K, V}, snapshot.first_level[], s.inmemory)
-        while !isnothing(l)
-            push!(levels, l[])
-            l = get_level(Level{K, V}, l.next_level[], s.inmemory)
-        end
-        new{K, V}(levels, s)
-    end
-end
-
-mutable struct LevelIterationState{K, V}
-    current_entry::Entry{K, V}
-    current_table_index::Int64
-    current_entry_index::Int64
-    done::Bool
-end
-
-mutable struct IterationState{K, V}
-    current_levels_state::Vector{LevelIterationState{K, V}}
-end
-
-function next_state(s::LevelIterationState{K, V}, l::Level{K, V}, inmemory::InMemoryData) where {K, V}
-    s.current_entry_index += 1
-    t = get_table(Table{K, V}, l.tables[s.current_table_index], inmemory)[]
-    if s.current_entry_index > t.size
-        s.current_entry_index = 1
-        s.current_table_index += 1
-        if s.current_table_index > length(l.tables)
-            s.done = true
-        end
-    end
-    s.current_entry = t.entries[s.current_entry_index]
-end
-
-function iter_init(iter::Iterator{K, V}) where {K, V}
-    levels_state = Vector{LevelIterationState{K, V}}()
-    min_index = 0
-    min = nothing
-    for i in 1:length(iter.levels)
-        table_index = 1
-        t = get_table(Table{K, V}, iter.levels[i].tables[table_index], iter.store.inmemory)[]
-        entry_index = 1
-        entry = t.entries[entry_index]
-        if isnothing(min) || entry < min 
-            min = entry
-            min_index = i
-        end
-        push!(levels_state, LevelIterationState(t.entries[entry_index],
-                                                table_index,
-                                                entry_index,
-                                                length(iter.levels[i].tables) == 0))
-    end
-    next_state(levels_state[min_index], iter.levels[min_index], iter.store.inmemory) 
-    return (min, IterationState{K, V}(levels_state))
-end
-
-function iter_next(iter::Iterator, state)
-    e, state = state
-    next = nothing
-    next_index = 0
-    for i in 1:length(iter.levels)
-        if !state.current_levels_state[i].done && (isnothing(next) || state.current_levels_state[i].current_entry < next)
-            next = state.current_levels_state[i].current_entry
-            next_index = i
-        end
-    end
-    next_state(state.current_levels_state[next_index], iter.levels[next_index], iter.store.inmemory) 
-    return (e, (next, state))
-end
-
-# TODO bug fix first element is wrong
-function seek_lub_search(iter::Iterator{K, V}, state::IterationState, key) where {K, V}
-    key = convert(K, key)
-    min_index = 0
-    min = nothing
-    for i in 1:length(iter.levels)
-        table_index = key_table_index(iter.levels[i], key)
-        table = get_table(Table{K, V}, iter.levels[i].tables[table_index], iter.store.inmemory)
-        entry_index = lub(table.entries[], 1, table.size[], key) + 1
-        if entry_index > table.size[] 
-            state.current_levels_state[i].done = true
-        else 
-            state.current_levels_state[i].current_entry = table.entries[entry_index][]
-        end
-        state.current_levels_state[i].current_table_index = table_index
-        state.current_levels_state[i].current_entry_index = entry_index
-        if isnothing(min) || state.current_levels_state[i].current_entry < min 
-            min = state.current_levels_state[i].current_entry
-            min_index = i
-        end
-    end
-    next_state(state.current_levels_state[min_index], iter.levels[min_index], iter.store.inmemory) 
-    return (min, state)
-end
-
-# TODO bug fix last entry does not print
-function iter_done(iter::Iterator, state)
-    _, iter_state = state
-    level_states = iter_state.current_levels_state
-    for i in 1:length(level_states)
-        !level_states[i].done && return false
-    end
-    # TODO remove snapshot and call gc
-    true
 end

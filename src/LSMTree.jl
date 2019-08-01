@@ -1,70 +1,92 @@
 module LSMTree
 using Blobs
 
-function bsearch(v::Union{Vector, BlobVector}, l::Integer, r::Integer, k::K) where K
-    while l <= r
-        mid = floor(Int, l + (r - l) / 2)
-        if v[mid].key == k
-            return mid
-        elseif v[mid].key < k 
-            l = mid + 1
-        else
-            r = mid - 1
-        end
-    end
-    return 0
-end
-
-function lub(v::Union{Vector, BlobVector}, lo::Integer, hi::Integer, k::K) where K
-    p = i -> k < v[i].key
-    while lo < hi
-        mid::Integer = floor(lo + (hi-lo) / 2)
-        if p(mid)
-            hi = mid
-        else
-            lo = mid + 1
-        end
-    end
-    !p(lo) && return length(v)
-    lo
-end
-
-isnothing(::Any) = false
-isnothing(::Nothing) = true
-
-struct Entry{K, V}
-    key::K
-    val::V
-    deleted::Bool
-end
-
-isdeleted(e::Entry) = e.deleted
-Base.sizeof(e::Blob{Entry{K, V}}) where {K, V} = sizeof(K) + sizeof(V)
-Base.isless(e1::Entry, e2::Entry) = e1.key < e2.key
-Base.isequal(e1::Entry, e2::Entry) = e1.key == e2.key
-
-function Base.sizeof(v::Vector{Blob{Entry{K, V}}}) where {K, V}
-    size = 0
-    for i in v size += Blobs.sizeof(i) end
-    size
-end
-
-struct InMemoryData
-    path::String
-    tables_queue::Vector{Int64}
-    inmemory_tables::Dict{Int64, Blob}
-    inmemory_levels::Dict{Int64, Blob}
-    InMemoryData(path) = new(path, 
-                             Vector{Int64}(), 
-                             Dict{Int64, Blob}(), 
-                             Dict{Int64, Blob}())
-end
-
+include("utils.jl")
+include("entry.jl")
+include("inmemory_data.jl")
 include("bloom_filter.jl")
 include("table.jl")
 include("buffer.jl")
 include("level.jl")
+include("store_data.jl")
 include("store.jl")
+include("iterator.jl")
+
+function Base.get(s::Store{K, V}, key) where {K, V}
+    key = convert(K, key) 
+    result = get(s.buffer, key)
+    if !isnothing(result) 
+        result.deleted && return nothing
+        return result.val
+    end
+    l = get_level(Level{K, V}, s.data.first_level[], s.inmemory)
+    while !isnothing(l)
+        result = get(l[], key, s.inmemory)
+        if !isnothing(result)
+            result.deleted && return nothing
+            return result.val
+        end
+        l = get_level(Level{K, V}, l.next_level[], s.inmemory)
+    end
+    nothing
+end
+
+function Base.put!(s::Store{K, V}, key, val, deleted=false) where {K, V}
+    key = convert(K, key)
+    val = convert(V, val)
+    put!(s.buffer, key, val, deleted)
+    isfull(s.buffer) && buffer_dump(s)
+end
+
+Base.setindex!(s::Store{K, V}, val, key) where {K, V} = put!(s, key, val)
+Base.getindex(s::Store{K, V}, key) where {K, V} = get(s, key)
+
+# TODO delete key without getting the value
+function Base.delete!(s::Store, key)
+    val = get(s, key)
+    put!(s, key, val, true)
+end
+
+function Base.close(s::Store{K, V}) where {K, V}
+    buffer_dump(s)
+    # The id of first level is always unique
+    # Therefore we also used it as store id
+    open("$(s.inmemory.path)/$(s.data.first_level[]).str", "w+") do file
+        unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
+    end
+    print("LSMTree.Store{$K, $V} with id $(s.data.first_level[]) closed")
+    Blobs.free(s.data)
+end
+
+function snapshot(s::Store{K, V}) where {K, V}
+    buffer_dump(s)
+    # The id of first level is always unique
+    # Therefore we also used it as store id
+    open("$(s.inmemory.path)/$(s.data.first_level[]).str", "w+") do file
+        unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
+    end
+    snapshot = Blobs.malloc_and_init(StoreData{K, V}, s.data.fanout[], 
+                                     s.data.first_level_max_size[], 
+                                     s.data.table_threshold_size[])
+    snapshot.first_level[] = s.data.first_level[]
+    snapshot
+end
+
+function restore(::Type{K}, ::Type{V}, path::String, id::Int64) where {K, V}
+    file = "$path/$id.str"
+    if isfile(file)
+        s = missing
+        open(file) do f
+            size = filesize(f)
+            p = Libc.malloc(size)
+            b = Blob{StoreData{K, V}}(p, 0, size) 
+            unsafe_read(f, p, size)
+            s = Store{K, V}(path, b)
+        end
+        return s
+    end
+    nothing
+end
 
 export get, 
        put!,
