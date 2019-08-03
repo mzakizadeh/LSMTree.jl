@@ -88,7 +88,7 @@ function seek_lub_search(iter::Iterator{K, V}, state::IteratorState, key) where 
     for i in 1:length(iter.levels)
         table_index = key_table_index(iter.levels[i], key)
         table = get_table(Table{K, V}, iter.levels[i].tables[table_index], iter.store.inmemory)
-        entry_index = lub(table.entries[], 1, table.size[], key) + 1
+        entry_index = lub(table.entries[], 1, table.size[], key)
         if entry_index > table.size[] 
             state.levels_state[i].done = true
         else 
@@ -96,9 +96,9 @@ function seek_lub_search(iter::Iterator{K, V}, state::IteratorState, key) where 
         end
         state.levels_state[i].table_index = table_index
         state.levels_state[i].entry_index = entry_index
-        if isnothing(min) || state.levels_state[i].entry < min 
-            min = state.levels_state[i].entry
+        if !state.levels_state[i].done && (isnothing(min) || state.levels_state[i].entry < min) 
             min_index = i
+            min = state.levels_state[i].entry
         end
     end
     next_state(state.levels_state[min_index], iter.levels[min_index], iter.store.inmemory) 
@@ -106,6 +106,7 @@ function seek_lub_search(iter::Iterator{K, V}, state::IteratorState, key) where 
 end
 
 function iter_done(iter::Iterator, state)
+    length(iter.store) == 0 && return true
     _, iter_state = state
     level_states = iter_state.levels_state
     if iter_state.done

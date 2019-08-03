@@ -238,7 +238,7 @@ function partition(bounds::BlobVector{K},
 end
 
 function key_table_index(l::Level{K, V}, k::K) where {K, V}
-    k <= l.bounds[1] && return 1
+    (length(l.bounds) == 0 || k <= l.bounds[1]) && return 1
     k > l.bounds[length(l.bounds)] && return length(l.tables)
     for i in 1:length(l.bounds) - 1
         k > l.bounds[i] && k < l.bounds[i + 1] && return i + 1
