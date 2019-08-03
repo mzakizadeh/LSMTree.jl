@@ -85,6 +85,19 @@ LSMTree.Store{Int64, Int64} with 3 entries
 ### Iterate Over Data
 
 ```julia
+julia> iter = LSMTree.Iterator(s)
+
+julia> for e in iter
+           println(e)
+       end
+Main.LSMTree.Entry{Int64,Int64}(1, 12, false)
+Main.LSMTree.Entry{Int64,Int64}(2, 15, false)
+Main.LSMTree.Entry{Int64,Int64}(134, 13, false)
+```
+
+Or:
+
+```julia
 julia> let iter = LSMTree.Iterator(s), st = LSMTree.iter_init(iter)
            while !LSMTree.iter_done(iter, st)
                (e, st) = LSMTree.iter_next(iter, st)

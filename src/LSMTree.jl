@@ -58,20 +58,6 @@ function Base.close(s::Store{K, V}) where {K, V}
     Blobs.free(s.data)
 end
 
-function snapshot(s::Store{K, V}) where {K, V}
-    buffer_dump(s)
-    # The id of first level is always unique
-    # Therefore we also used it as store id
-    open("$(s.inmemory.path)/$(s.data.first_level[]).str", "w+") do file
-        unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
-    end
-    snapshot = Blobs.malloc_and_init(StoreData{K, V}, s.data.fanout[], 
-                                     s.data.first_level_max_size[], 
-                                     s.data.table_threshold_size[])
-    snapshot.first_level[] = s.data.first_level[]
-    snapshot
-end
-
 function restore(::Type{K}, ::Type{V}, path::String, id::Int64) where {K, V}
     file = "$path/$id.str"
     if isfile(file)

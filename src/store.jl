@@ -175,3 +175,22 @@ function compact(s::Store{K, V}) where {K, V}
         force_remove = false
     end
 end
+
+function snapshot(s::Store{K, V}) where {K, V}
+    buffer_dump(s)
+    # The id of first level is always unique
+    # Therefore we also used it as store id
+    open("$(s.inmemory.path)/$(s.data.first_level[]).str", "w+") do file
+        unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
+    end
+    snapshot = Blobs.malloc_and_init(StoreData{K, V}, s.data.fanout[], 
+                                     s.data.first_level_max_size[], 
+                                     s.data.table_threshold_size[])
+    snapshot.first_level[] = s.data.first_level[]
+    snapshot
+end
+
+function remove_snapshot(s::Store)
+    rm("$(s.inmemory.path)/$(s.data.first_level[]).str", force=true)
+    gc(s)
+end

@@ -108,6 +108,14 @@ end
 function iter_done(iter::Iterator, state)
     _, iter_state = state
     level_states = iter_state.levels_state
-    # TODO remove snapshot and call gc
-    return iter_state.done
+    if iter_state.done
+        remove_snapshot(iter.store)
+        return true
+    end
+    return false
+end
+
+function Base.iterate(iter::Iterator, state=iter_init(iter))
+    iter_done(iter, state) && return nothing
+    return iter_next(iter, state)
 end
