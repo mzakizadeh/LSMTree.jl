@@ -14,6 +14,9 @@ function next_state(s::LevelState{K, V},
         s.entry_index = 1
         s.table_index += 1
         s.done = s.table_index > length(l.tables)
+        if !s.done 
+            t = get_table(Table{K, V}, l.tables[s.table_index], inmemory)[]
+        end
     end
     s.entry = t.entries[s.entry_index]
 end
@@ -40,8 +43,9 @@ end
 
 function iter_init(iter::Iterator{K, V}) where {K, V}
     levels_state = Vector{LevelState{K, V}}()
-    min_index = 0
-    min = nothing
+    first_index = 0
+    first = nothing
+    # Initialize level states
     for i in 1:length(iter.levels)
         table_index = 1
         t = get_table(Table{K, V}, 
@@ -49,38 +53,68 @@ function iter_init(iter::Iterator{K, V}) where {K, V}
                       iter.store.inmemory)[]
         entry_index = 1
         entry = t.entries[entry_index]
-        if isnothing(min) || entry < min 
-            min = entry
-            min_index = i
+        if isnothing(first) || entry < first 
+            first_index = i
+            first = entry
         end
         push!(levels_state, LevelState(t.entries[entry_index],
                                        table_index,
                                        entry_index,
                                        length(iter.levels[i].tables) == 0))
     end
-    next_state(levels_state[min_index], iter.levels[min_index], iter.store.inmemory) 
-    return (min, IteratorState{K, V}(levels_state, false))
+    # Find first entry that is not deleted
+    while isdeleted(first)
+        for i in 1:length(iter.levels)
+            if !levels_state[i].done && first.key == levels_state[i].entry.key
+                next_state(levels_state[i], iter.levels[i], iter.store.inmemory)
+            end
+        end
+        first_index = 0
+        first = nothing
+        for i in 1:length(iter.levels)
+            if !levels_state[i].done && (isnothing(first) || levels_state[i].entry < first)
+                first = levels_state[i].entry
+                first_index = i
+            end
+        end
+    end
+    for i in 1:length(iter.levels)
+        if !levels_state[i].done && first.key == levels_state[i].entry.key
+            next_state(levels_state[i], iter.levels[i], iter.store.inmemory)
+        end
+    end
+    return (first, IteratorState{K, V}(levels_state, length(iter.store) == 0))
 end
 
 function iter_next(iter::Iterator, state)
     e, state = state
+    @assert !state.done
     next = nothing
     next_index = 0
-    for i in 1:length(iter.levels)
-        if !state.levels_state[i].done && (isnothing(next) || state.levels_state[i].entry < next)
-            next = state.levels_state[i].entry
-            next_index = i
+    # Find next entry that is not flaged as deleted
+    while isnothing(next) || isdeleted(next)
+        next = nothing
+        next_index = 0
+        for i in 1:length(iter.levels)
+            if !state.levels_state[i].done && (isnothing(next) || state.levels_state[i].entry < next)
+                next = state.levels_state[i].entry
+                next_index = i
+            end
+        end
+        if next_index == 0
+            state.done = true
+            return (e, (nothing, state))
+        end
+        # We use for loop so we don't reiterate old duplicated data
+        for i in 1:length(iter.levels)
+            if !state.levels_state[i].done && next.key == state.levels_state[i].entry.key
+                next_state(state.levels_state[i], iter.levels[i], iter.store.inmemory)
+            end
         end
     end
-    if next_index == 0
-        state.done = true
-        return (e, (nothing, state))
-    end
-    next_state(state.levels_state[next_index], iter.levels[next_index], iter.store.inmemory) 
     return (e, (next, state))
 end
 
-# TODO bug fix first element is wrong
 function seek_lub_search(iter::Iterator{K, V}, state::IteratorState, key) where {K, V}
     key = convert(K, key)
     min_index = 0
@@ -106,7 +140,6 @@ function seek_lub_search(iter::Iterator{K, V}, state::IteratorState, key) where 
 end
 
 function iter_done(iter::Iterator, state)
-    length(iter.store) == 0 && return true
     _, iter_state = state
     level_states = iter_state.levels_state
     if iter_state.done
