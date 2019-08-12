@@ -15,14 +15,14 @@ include("iterator.jl")
 function Base.get(s::Store{K, V}, key) where {K, V}
     key = convert(K, key) 
     result = get(s.buffer, key)
-    if !isnothing(result) 
+    if result !== nothing 
         result.deleted && return nothing
         return result.val
     end
     l = get_level(Level{K, V}, s.data.first_level[], s.inmemory)
-    while !isnothing(l)
+    while l !== nothing
         result = get(l[], key, s.inmemory)
-        if !isnothing(result)
+        if result !== nothing
             result.deleted && return nothing
             return result.val
         end
@@ -54,14 +54,14 @@ function Base.close(s::Store{K, V}) where {K, V}
     open("$(s.inmemory.path)/$(s.data.first_level[]).str", "w+") do file
         unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
     end
-    print("LSMTree.Store{$K, $V} with id $(s.data.first_level[]) closed")
+    @info "LSMTree.Store{$K, $V} with id $(s.data.first_level[]) closed"
     Blobs.free(s.data)
 end
 
 function restore(::Type{K}, ::Type{V}, path::String, id::Int64) where {K, V}
     file = "$path/$id.str"
     if isfile(file)
-        s = missing
+        s::Union{Nothing, Store{K, V}} = nothing
         open(file) do f
             size = filesize(f)
             p = Libc.malloc(size)

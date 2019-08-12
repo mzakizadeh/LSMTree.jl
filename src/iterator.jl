@@ -28,7 +28,7 @@ struct Iterator{K, V}
         snapshot = LSMTree.snapshot(s)
         levels = Vector{Level{K, V}}()
         l = get_level(Level{K, V}, snapshot.first_level[], s.inmemory)
-        while !isnothing(l)
+        while l !== nothing
             push!(levels, l[])
             l = get_level(Level{K, V}, l.next_level[], s.inmemory)
         end
@@ -53,7 +53,7 @@ function iter_init(iter::Iterator{K, V}) where {K, V}
                       iter.store.inmemory)[]
         entry_index = 1
         entry = t.entries[entry_index]
-        if isnothing(first) || entry < first 
+        if first === nothing || entry < first 
             first_index = i
             first = entry
         end
@@ -72,7 +72,7 @@ function iter_init(iter::Iterator{K, V}) where {K, V}
         first_index = 0
         first = nothing
         for i in 1:length(iter.levels)
-            if !levels_state[i].done && (isnothing(first) || levels_state[i].entry < first)
+            if !levels_state[i].done && (first === nothing || levels_state[i].entry < first)
                 first = levels_state[i].entry
                 first_index = i
             end
@@ -92,11 +92,11 @@ function iter_next(iter::Iterator, state)
     next = nothing
     next_index = 0
     # Find next entry that is not flaged as deleted
-    while isnothing(next) || isdeleted(next)
+    while next === nothing || isdeleted(next)
         next = nothing
         next_index = 0
         for i in 1:length(iter.levels)
-            if !state.levels_state[i].done && (isnothing(next) || state.levels_state[i].entry < next)
+            if !state.levels_state[i].done && (next === nothing || state.levels_state[i].entry < next)
                 next = state.levels_state[i].entry
                 next_index = i
             end
@@ -130,7 +130,7 @@ function seek_lub_search(iter::Iterator{K, V}, state::IteratorState, key) where 
         end
         state.levels_state[i].table_index = table_index
         state.levels_state[i].entry_index = entry_index
-        if !state.levels_state[i].done && (isnothing(min) || state.levels_state[i].entry < min) 
+        if !state.levels_state[i].done && (min === nothing || state.levels_state[i].entry < min) 
             min_index = i
             min = state.levels_state[i].entry
         end
