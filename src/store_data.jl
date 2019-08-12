@@ -21,4 +21,3 @@ function Blobs.init(bf::Blob{StoreData{K, V}},
     bf.table_threshold_size[] = table_threshold_size
     free
 end
-
