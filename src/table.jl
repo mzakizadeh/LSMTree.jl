@@ -70,6 +70,15 @@ function Blobs.init(l::Blob{Table{K, V}},
     free
 end
 
+function Blobs.malloc_and_init(::Type{Table}, args...)::Blob{Table}
+    size = Blobs.self_size(Table) + child_size(Table, args...)
+    page = malloc_page(MemoryPage, size)
+    blob = Blob{Table}(page.ptr, 0, size)
+    used = init(blob, args...)
+    @assert used - blob == size
+    blob
+end
+
 function Base.get(t::Table{K, V}, key::K) where {K, V} 
     i = bsearch(t.entries, 1, length(t), key)
     if i > 0

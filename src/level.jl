@@ -58,6 +58,15 @@ function Blobs.init(l::Blob{Level{K, V}},
     free
 end
 
+function Blobs.malloc_and_init(::Type{Level}, args...)::Blob{Level}
+    size = Blobs.self_size(Level) + child_size(Level, args...)
+    page = malloc_page(MemoryPage, size)
+    blob = Blob{Level}(page.ptr, 0, size)
+    used = init(blob, args...)
+    @assert used - blob == size
+    blob
+end
+
 function empty(l::Blob{Level{K, V}}, s::InMemoryData) where {K, V}
     res = Blobs.malloc_and_init(Level{K, V}, 
                                 generate_id(Level, s),

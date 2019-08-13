@@ -24,3 +24,11 @@ function Blobs.init(bf::Blob{StoreData{K, V}},
     free
 end
 
+function Blobs.malloc_and_init(::Type{StoreData}, args...)::Blob{StoreData}
+    size = Blobs.self_size(StoreData) + child_size(StoreData, args...)
+    page = malloc_page(MemoryPage, size)
+    blob = Blob{StoreData}(page.ptr, 0, size)
+    used = init(blob, args...)
+    @assert used - blob == size
+    blob
+end

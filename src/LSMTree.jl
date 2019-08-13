@@ -1,6 +1,7 @@
 module LSMTree
 using Blobs
 
+include("interface.jl")
 include("utils.jl")
 include("entry.jl")
 include("inmemory_data.jl")
