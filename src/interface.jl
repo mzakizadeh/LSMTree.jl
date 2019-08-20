@@ -79,3 +79,25 @@ delete_pagehandle(::Type{FilePageHandle},
                   id::AbstractString; 
                   force::Bool=false, 
                   recursive::Bool=false) = rm(id, force=force, recursive=recursive)
+
+function mkpath_pagehandle(::Type{T},
+                  path::AbstractString,
+                  mode::Unsigned=0o777) where {T}
+    error("Not implemented")
+end
+
+mkpath_pagehandle(FilePageHandle, 
+                  path::AbstractString,
+                  mode::Unsigned=0o777) = Base.Filesystem.mkpath(path, mode)
+
+function isdir_pagehandle(Type{T}, path)::Bool where {T <: PageHandle}
+    error("Not implemented")
+end
+
+isdir_pagehandle(FilePageHandle, path)::Bool = Base.Filesystem.isdir(path)
+
+function isfile_pagehandle(Type{T}, path)::Bool where {T <: PageHandle}
+    error("Not implemented")
+end
+
+isfile_pagehandle(FilePageHandle, path)::Bool = Base.Filesystem.isfile(path)

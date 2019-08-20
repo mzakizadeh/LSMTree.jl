@@ -64,17 +64,22 @@ function Base.close(s::Store{K, V}) where {K, V}
     Blobs.free(s.data)
 end
 
-function restore(::Type{K}, ::Type{V}, path::String, id::Int64) where {K, V}
+function restore(::Type{K}, 
+                 ::Type{V}, 
+                 ::Type{PAGE},
+                 ::Type{PAGE_HANDLE},
+                 path::String, 
+                 id::Int64) where {K, V, PAGE, PAGE_HANDLE}
     file = "$path/$id.str"
-    if isfile(file)
-        s = missing
-        open(file) do f
-            size = filesize(f)
-            p = Libc.malloc(size)
-            b = Blob{StoreData{K, V}}(p, 0, size) 
-            unsafe_read(f, p, size)
-            s = Store{K, V}(path, b)
-        end
+    if isfile_pagehandle(PAGE_HANDLE, file)
+        s::Union{Nothing, Store} = nothing
+        f = open_pagehandle(PAGE_HANDLE, file)
+        size = filesize(f)
+        page = malloc_page(PAGE, size)
+        blob = Blob{Level{K, V}}(pointer(page), 0, size)
+        read_pagehandle(PAGE_HANDLE, page, size)
+        s = Store{K, V}(path, blob)
+        close_pagehandle(f)
         return s
     end
     nothing

@@ -107,8 +107,7 @@ function get_level(::Type{Level{K, V}},
     id <= 0 && return nothing
     haskey(s.inmemory_levels, id) && return s.inmemory_levels[id]
     path = "$(s.path)/$id.lvl"
-    # FIXME isfile in interface
-    # if isfile(path)
+    if isfile_pagehandle(PAGE_HANDLE, path)
         f = open_pagehandle(PAGE_HANDLE, path)
         size = filesize(f.stream)
         page = malloc_page(PAGE, size)
@@ -118,8 +117,8 @@ function get_level(::Type{Level{K, V}},
         s.inmemory_levels[blob.id[]] = blob
         close_pagehandle(f)
         return s.inmemory_levels[id]
-    # end
-    # nothing
+    end
+    error("Level does not exist! (path=$path)")
 end
 
 function set_level(l::Blob{Level{K, V}}, 

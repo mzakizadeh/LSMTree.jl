@@ -7,9 +7,8 @@ mutable struct Store{K, V, PAGE, PAGE_HANDLE}
         buffer_max_size::Int=125000, 
         table_threshold_size::Int=125000
     ) where {K, V, PAGE, PAGE_HANDLE} 
-        @assert !isdir(path) "Directory already exists! Try using restore function."
-        # FIXME mkpath in interface?
-        mkpath(path)
+        @assert !isdir_pagehandle(PAGE_HANDLE, path) "Directory already exists! Try using restore function."
+        mkpath_pagehandle(PAGE_HANDLE, path)
         data = Blobs.malloc_and_init(StoreData{K, V}, 
                                      2, buffer_max_size * 2, 
                                      table_threshold_size)

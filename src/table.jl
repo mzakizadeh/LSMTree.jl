@@ -28,8 +28,7 @@ function get_table(::Type{Table{K, V}},
        return s.inmemory_tables[id]
     end
     path = "$(s.path)/$id.tbl"
-    # FIXME isfile in interface
-    # if isfile(path)
+    if isfile_pagehandle(PAGE_HANDLE, path)
         f = open_pagehandle(PAGE_HANDLE, path)
         size = filesize(f.stream)
         page = malloc_page(PAGE, size)
@@ -42,8 +41,8 @@ function get_table(::Type{Table{K, V}},
         length(s.tables_queue) > 100 && delete!(s.inmemory_tables, 
                                              pop!(s.tables_queue))
         return s.inmemory_tables[id]
-    # end
-    # error("Table does not exist! (path=$path)")
+    end
+    error("Table does not exist! (path=$path)")
 end
 
 function set_table(t::Blob{Table{K, V}}, 
