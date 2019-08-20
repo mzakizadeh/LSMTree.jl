@@ -58,22 +58,26 @@ function Blobs.init(l::Blob{Level{K, V}},
     free
 end
 
-function Blobs.malloc_and_init(::Type{Level}, args...)::Blob{Level}
-    size = Blobs.self_size(Level) + child_size(Level, args...)
-    page = malloc_page(MemoryPage, size)
-    blob = Blob{Level}(page.ptr, 0, size)
+function malloc_and_init(::Type{Level{K, V}}, 
+                         inmemory::InMemoryData{PAGE, PAGE_HANDLE}, 
+                         args...)::Blob{Level{K, V}} where {K, V, PAGE, PAGE_HANDLE}
+    size = Blobs.self_size(Level{K, V}) + Blobs.child_size(Level{K, V}, args...)
+    page = malloc_page(PAGE, size)
+    inmemory.level_pages[args[1]] = page
+    blob = Blob{Level{K, V}}(pointer(page), 0, size)
     used = init(blob, args...)
     @assert used - blob == size
     blob
 end
 
 function empty(l::Blob{Level{K, V}}, s::InMemoryData) where {K, V}
-    res = Blobs.malloc_and_init(Level{K, V}, 
-                                generate_id(Level, s),
-                                Vector{Int64}(), 
-                                Vector{K}(), 0, 
-                                l.max_size[], 
-                                l.table_threshold_size[])
+    res = malloc_and_init(Level{K, V},
+                          s, 
+                          generate_id(Level, s),
+                          Vector{Int64}(), 
+                          Vector{K}(), 0, 
+                          l.max_size[], 
+                          l.table_threshold_size[])
     res.prev_level[] = l.prev_level[]
     res.next_level[] = l.next_level[]
     res
@@ -84,40 +88,48 @@ function copy(l::Blob{Level{K, V}}, s::InMemoryData) where {K, V}
     bounds = Vector{K}()
     for t in l.tables[] push!(tables, t) end
     for b in l.bounds[] push!(bounds, b) end
-    res = Blobs.malloc_and_init(Level{K, V}, 
-                                generate_id(Level, s),
-                                tables, 
-                                bounds,
-                                l.size[],
-                                l.max_size[], 
-                                l.table_threshold_size[])
+    res = malloc_and_init(Level{K, V},
+                          s,
+                          generate_id(Level, s),
+                          tables,
+                          bounds,
+                          l.size[],
+                          l.max_size[],
+                          l.table_threshold_size[])
     res.prev_level[] = l.prev_level[]
     res.next_level[] = l.next_level[]
     res
 end
 
-function get_level(::Type{Level{K, V}}, id::Int64, s::InMemoryData) where {K, V}
+function get_level(::Type{Level{K, V}}, 
+                   id::Int64, 
+                   s::InMemoryData{PAGE, PAGE_HANDLE}) where {K, V, PAGE, PAGE_HANDLE}
     id <= 0 && return nothing
     haskey(s.inmemory_levels, id) && return s.inmemory_levels[id]
     path = "$(s.path)/$id.lvl"
-    if isfile(path)
-        open(path) do f
-            size = filesize(f)
-            p = Libc.malloc(size)
-            b = Blob{Level{K, V}}(p, 0, size)
-            unsafe_read(f, p, size)
-            s.inmemory_levels[b.id[]] = b
-        end
+    # FIXME isfile in interface
+    # if isfile(path)
+        f = open_pagehandle(PAGE_HANDLE, path)
+        size = filesize(f.stream)
+        page = malloc_page(PAGE, size)
+        blob = Blob{Level{K, V}}(pointer(page), 0, size)
+        read_pagehandle(PAGE_HANDLE, page, size)
+        s.pages[id] = page
+        s.inmemory_levels[blob.id[]] = blob
+        close_pagehandle(f)
         return s.inmemory_levels[id]
-    end
-    nothing
+    # end
+    # nothing
 end
 
-function set_level(l::Blob{Level{K, V}}, s::InMemoryData) where {K, V}
+function set_level(l::Blob{Level{K, V}}, 
+                   s::InMemoryData{PAGE, PAGE_HANDLE}) where {K, V, PAGE, PAGE_HANDLE}
     s.inmemory_levels[l.id[]] = l
-    open("$(s.path)/$(l.id[]).lvl", "w+") do file
-        unsafe_write(file, pointer(l), getfield(l, :limit))
-    end
+    id = l.id[]
+    path = "$(s.path)/$id.lvl"
+    file = open_pagehandle(PAGE_HANDLE, path, truncate=true, read=true)
+    write_pagehandle(file, s.pages[id], getfield(l, :limit))
+    close_pagehandle(file)
 end
 
 function Base.length(l::Level)
@@ -212,13 +224,14 @@ function Base.merge(s::InMemoryData,
         end
     end
     pop!(result_bounds)
-    res = Blobs.malloc_and_init(Level{K, V}, 
-                                generate_id(Level, s),
-                                result_tables, 
-                                result_bounds,
-                                l.size[] + length(e),
-                                l.max_size[],
-                                l.table_threshold_size[])
+    res = malloc_and_init(Level{K, V}, 
+                          s,
+                          generate_id(Level, s),
+                          result_tables, 
+                          result_bounds,
+                          l.size[] + length(e),
+                          l.max_size[],
+                          l.table_threshold_size[])
     res.prev_level[], res.next_level[] = l.prev_level[], l.next_level[]
     return res
 end

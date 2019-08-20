@@ -1,27 +1,31 @@
 abstract type Page end
 
 struct MemoryPage <: Page
-   ptr::Ptr
+   _ptr::Ptr
 end
+
+pointer(page::MemoryPage) = page._ptr
 
 function malloc_page(::Type{T}, size::Int)::T where {T <: Page}
     error("Not implemented")
 end
 
 function malloc_page(::Type{MemoryPage}, size::Int)::MemoryPage
-    return MemoryPage(Libc.malloc(size))
+    ptr = Libc.malloc(size)
+    page = MemoryPage(ptr)
+    page
 end
 
 function free_page(page::T) where {T <: Page}
     error("Not implemented")
 end
 
-free_page(page::MemoryPage) = Libc.free(page.ptr)
+free_page(page::MemoryPage) = Libc.free(page._ptr)
 
 abstract type PageHandle end
 
 struct FilePageHandle
-    id:String
+    id::String
     stream::IOStream
 end
 
@@ -31,15 +35,19 @@ function open_pagehandle(::Type{T},
     error("Not implemented")
 end
 
-open_pagehandle(::Type{FilePageHandle}, 
-                id::AbstractString; 
-                keywords...)::FilePageHandle = open(id, keywords...)
+function open_pagehandle(::Type{FilePageHandle}, 
+                         id::AbstractString;
+                         keywords...)::FilePageHandle
+    stream = open(id; keywords...)
+    pagehandle = FilePageHandle(id, stream)
+    pagehandle
+end
 
 function close_pagehandle(phandle::T) where {T <: PageHandle}
     error("Not implemented")
 end
 
-close_pagehandle(phandle::FilePageHandle) = close(phandle)
+close_pagehandle(phandle::FilePageHandle) = close(phandle.stream)
 
 function write_pagehandle(phandle::T, 
                           page::P, 
@@ -49,7 +57,7 @@ end
 
 write_pagehandle(phandle::FilePageHandle, 
                  page::MemoryPage, 
-                 nbytes::UInt) = unsafe_write(phandle.stream, page.ptr, nbytes)
+                 nbytes::UInt) = unsafe_write(phandle.stream, page._ptr, nbytes)
 
 function read_pagehandle(phandle::T,
                          page::P,

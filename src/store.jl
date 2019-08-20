@@ -1,23 +1,46 @@
-mutable struct Store{K, V}
+mutable struct Store{K, V, PAGE, PAGE_HANDLE}
     buffer::Buffer{K, V}
     data::Blob{StoreData{K, V}}
-    inmemory::InMemoryData
-    function Store{K, V}(path::String="./db",
-                         buffer_max_size::Integer=125000, 
-                         table_threshold_size::Integer=125000) where {K, V} 
+    inmemory::InMemoryData{PAGE, PAGE_HANDLE}
+    function Store{K, V, PAGE, PAGE_HANDLE}(
+        path::String="./db",
+        buffer_max_size::Int=125000, 
+        table_threshold_size::Int=125000
+    ) where {K, V, PAGE, PAGE_HANDLE} 
         @assert !isdir(path) "Directory already exists! Try using restore function."
+        # FIXME mkpath in interface?
         mkpath(path)
-        data = Blobs.malloc_and_init(StoreData{K, V}, 2, 
-                                     buffer_max_size * 2, 
+        data = Blobs.malloc_and_init(StoreData{K, V}, 
+                                     2, buffer_max_size * 2, 
                                      table_threshold_size)
-        new{K, V}(Buffer{K, V}(buffer_max_size), 
-                  data,
-                  InMemoryData(path))
+        new{K, V, PAGE, PAGE_HANDLE}(Buffer{K, V}(buffer_max_size), 
+                                     data,
+                                     InMemoryData{PAGE, PAGE_HANDLE}(path))
     end
-    Store{K, V}(path::String, data::Blob{StoreData{K, V}}) where {K, V} =
-        new{K, V}(Buffer{K, V}(floor(Int64, data.first_level_max_size[] / 2)), 
-                  data,
-                  InMemoryData(path))
+    function Store{K, V, PAGE, PAGE_HANDLE}(
+        path::String, 
+        data::Blob{StoreData{K, V}}
+    ) where {K, V, PAGE, PAGE_HANDLE}
+        buffer_max_size = floor(Int64, data.first_level_max_size[] / 2)
+        new{K, V, PAGE, PAGE_HANDLE}(
+            Buffer{K, V}(buffer_max_size), 
+            data,
+            InMemoryData{PAGE, PAGE_HANDLE}(path)
+        )
+    end
+end
+
+function Store{K, V}(path::String="./db", 
+                     buffer_max_size::Int=125000, 
+                     table_threshold_size::Int=125000) where {K, V} 
+    Store{K, V, MemoryPage, FilePageHandle}(path, 
+                                            buffer_max_size, 
+                                            table_threshold_size)
+end
+
+function Store{K, V}(path::String,
+                     data::Blob{StoreData{K, V}}) where {K, V} 
+    Store{K, V, MemoryPage, FilePageHandle}(path, data)
 end
 
 Base.isempty(s::StoreData{K, V}) where {K, V} = s.first_level <= 0
@@ -121,13 +144,14 @@ function compact(s::Store{K, V}) where {K, V}
     end
     # Create and return new level if tree has no level
     if isnothing(current)
-        new_level = Blobs.malloc_and_init(Level{K, V}, 
-                                          generate_id(Level, s.inmemory),
-                                          Vector{Int64}(),
-                                          Vector{V}(), 
-                                          0, 
-                                          s.buffer.max_size * s.data.fanout[], 
-                                          s.data.table_threshold_size[])
+        new_level = malloc_and_init(Level{K, V}, 
+                                    s.inmemory,
+                                    generate_id(Level, s.inmemory),
+                                    Vector{Int64}(),
+                                    Vector{V}(), 
+                                    0, 
+                                    s.buffer.max_size * s.data.fanout[], 
+                                    s.data.table_threshold_size[])
         set_level(new_level, s.inmemory)
         s.data.first_level[] = new_level.id[]
         return
@@ -180,9 +204,10 @@ function snapshot(s::Store{K, V}) where {K, V}
     buffer_dump(s)
     # The id of first level is always unique
     # Therefore we also used it as store id
-    open("$(s.inmemory.path)/$(s.data.first_level[]).str", "w+") do file
-        unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
-    end
+    path = "$(s.inmemory.path)/$(s.data.first_level[]).str"
+    file = open_pagehandle(FilePageHandle, path, truncate=true, read=true)
+    unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
+    close_pagehandle(file)
     snapshot = Blobs.malloc_and_init(StoreData{K, V}, s.data.fanout[], 
                                      s.data.first_level_max_size[], 
                                      s.data.table_threshold_size[])
@@ -191,6 +216,7 @@ function snapshot(s::Store{K, V}) where {K, V}
 end
 
 function remove_snapshot(s::Store)
-    rm("$(s.inmemory.path)/$(s.data.first_level[]).str", force=true)
+    path = "$(s.inmemory.path)/$(s.data.first_level[]).str"
+    delete_pagehandle(FilePageHandle, path, force=true)
     gc(s)
 end

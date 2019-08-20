@@ -52,9 +52,14 @@ function Base.close(s::Store{K, V}) where {K, V}
     buffer_dump(s)
     # The id of first level is always unique
     # Therefore we also used it as store id
-    open("$(s.inmemory.path)/$(s.data.first_level[]).str", "w+") do file
-        unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
-    end
+    path = "$(s.inmemory.path)/$(s.data.first_level[]).str"
+    file = open_pagehandle(FilePageHandle, 
+                           path, 
+                           pointer(s.data), 
+                           truncate=true, 
+                           read=true)
+    write_pagehandle(file, file.page, getfield(s.data, :limit))
+    close_pagehandle(file)
     print("LSMTree.Store{$K, $V} with id $(s.data.first_level[]) closed")
     Blobs.free(s.data)
 end
