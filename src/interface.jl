@@ -51,23 +51,23 @@ close_pagehandle(phandle::FilePageHandle) = close(phandle.stream)
 
 function write_pagehandle(phandle::T, 
                           page::P, 
-                          nbytes::UInt) where {T <: PageHandle, P <: Page}
+                          nbytes::Int) where {T <: PageHandle, P <: Page}
     error("Not implemented")
 end
 
 write_pagehandle(phandle::FilePageHandle, 
                  page::MemoryPage, 
-                 nbytes::UInt) = unsafe_write(phandle.stream, page._ptr, nbytes)
+                 nbytes::Int) = unsafe_write(phandle.stream, page._ptr, nbytes)
 
 function read_pagehandle(phandle::T,
                          page::P,
-                         nbytes::UInt) where {T <: PageHandle, P <: Page}
+                         nbytes::Int) where {T <: PageHandle, P <: Page}
     error("Not implemented")
 end
 
 read_pagehandle(phandle::FilePageHandle,
                 page::MemoryPage,
-                nbytes::UInt) = unsafe_read(phandle.stream, page.ptr, nbytes)
+                nbytes::Int) = unsafe_read(phandle.stream, page._ptr, nbytes)
 
 function delete_pagehandle(::Type{T}, 
                            id::AbstractString; 
@@ -81,23 +81,23 @@ delete_pagehandle(::Type{FilePageHandle},
                   recursive::Bool=false) = rm(id, force=force, recursive=recursive)
 
 function mkpath_pagehandle(::Type{T},
-                  path::AbstractString,
-                  mode::Unsigned=0o777) where {T}
+                           path::AbstractString,
+                           mode::Unsigned=0o777) where {T <: PageHandle}
     error("Not implemented")
 end
 
-mkpath_pagehandle(FilePageHandle, 
-                  path::AbstractString,
-                  mode::Unsigned=0o777) = Base.Filesystem.mkpath(path, mode)
+mkpath_pagehandle(::Type{FilePageHandle}, 
+                  path::AbstractString;
+                  mode::Unsigned=0o777) = Base.Filesystem.mkpath(path, mode=mode)
 
-function isdir_pagehandle(Type{T}, path)::Bool where {T <: PageHandle}
+function isdir_pagehandle(::Type{T}, path)::Bool where {T <: PageHandle}
     error("Not implemented")
 end
 
-isdir_pagehandle(FilePageHandle, path)::Bool = Base.Filesystem.isdir(path)
+isdir_pagehandle(::Type{FilePageHandle}, path)::Bool = Base.Filesystem.isdir(path)
 
-function isfile_pagehandle(Type{T}, path)::Bool where {T <: PageHandle}
+function isfile_pagehandle(::Type{T}, path)::Bool where {T <: PageHandle}
     error("Not implemented")
 end
 
-isfile_pagehandle(FilePageHandle, path)::Bool = Base.Filesystem.isfile(path)
+isfile_pagehandle(::Type{FilePageHandle}, path)::Bool = Base.Filesystem.isfile(path)

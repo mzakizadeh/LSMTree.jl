@@ -13,13 +13,12 @@ isfull(l::Level) = l.size >= l.max_size
 islast(l::Level) = l.next_level <= 0
 isfirst(l::Level) = l.prev_level <= 0
 
-# TODO write a better id generator
-function generate_id(::Type{Level}, s::InMemoryData) 
-    only_tables_pattern = x -> occursin(r"([0-9])+(.lvl)$", x)
-    file_names = filter(only_tables_pattern, readdir(s.path))
-    length(file_names) == 0 && return 1
-    return findmax(map(x -> parse(Int64, replace(x, ".lvl" => "")), 
-                         file_names))[1] + 1
+function generate_id(::Type{Level}, inmemory::InMemoryData)
+    meta, page = load_meta(inmemory)
+    id = meta.next_level_id[]
+    meta.next_level_id[] += 1
+    save_meta(meta, page, inmemory)
+    return id
 end
 
 function Blobs.child_size(::Type{Level{K, V}}, 
@@ -65,7 +64,7 @@ function malloc_and_init(::Type{Level{K, V}},
     page = malloc_page(PAGE, size)
     inmemory.level_pages[args[1]] = page
     blob = Blob{Level{K, V}}(pointer(page), 0, size)
-    used = init(blob, args...)
+    used = Blobs.init(blob, args...)
     @assert used - blob == size
     blob
 end
@@ -112,8 +111,8 @@ function get_level(::Type{Level{K, V}},
         size = filesize(f.stream)
         page = malloc_page(PAGE, size)
         blob = Blob{Level{K, V}}(pointer(page), 0, size)
-        read_pagehandle(PAGE_HANDLE, page, size)
-        s.pages[id] = page
+        read_pagehandle(f, page, size)
+        s.level_pages[id] = page
         s.inmemory_levels[blob.id[]] = blob
         close_pagehandle(f)
         return s.inmemory_levels[id]
@@ -127,7 +126,7 @@ function set_level(l::Blob{Level{K, V}},
     id = l.id[]
     path = "$(s.path)/$id.lvl"
     file = open_pagehandle(PAGE_HANDLE, path, truncate=true, read=true)
-    write_pagehandle(file, s.pages[id], getfield(l, :limit))
+    write_pagehandle(file, s.level_pages[id], getfield(l, :limit))
     close_pagehandle(file)
 end
 
@@ -177,9 +176,10 @@ function Base.merge(s::InMemoryData,
             for i in 1:length(e)
                 push!(entries, e[i])
             end
-            table = Blobs.malloc_and_init(Table{K, V}, 
-                                          generate_id(Table, s), 
-                                          entries)
+            table = malloc_and_init(Table{K, V},
+                                    s, 
+                                    generate_id(Table, s), 
+                                    entries)
         end
         if table.size[] > l.table_threshold_size[]
             (t1, t2) = split(table, s)

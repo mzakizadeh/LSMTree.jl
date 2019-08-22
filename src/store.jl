@@ -164,7 +164,6 @@ function compact(s::Store{K, V}) where {K, V}
                                           Vector{V}(), 0,
                                           last_level.size[] * s.data.fanout[], 
                                           s.data.table_threshold_size[])
-        new_level.id[] += 1
         new_level.prev_level[] = last_level.id[]
         last_level.next_level[] = new_level.id[]
         set_level(last_level, s.inmemory)
@@ -185,8 +184,6 @@ function compact(s::Store{K, V}) where {K, V}
         end
         current_isfirst = isfirst(current[])
         current = empty(current, s.inmemory)
-        # TODO problem with generating new id
-        current.id[] += 1
         current.next_level[] = next.id[]
         next.prev_level[] = current.id[]
         if current_isfirst s.data.first_level[] = current.id[] end

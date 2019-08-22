@@ -5,6 +5,7 @@ include("interface.jl")
 include("utils.jl")
 include("entry.jl")
 include("inmemory_data.jl")
+include("meta_data.jl")
 include("bloom_filter.jl")
 include("table.jl")
 include("buffer.jl")
@@ -58,7 +59,7 @@ function Base.close(s::Store{K, V}) where {K, V}
                            pointer(s.data), 
                            truncate=true, 
                            read=true)
-    write_pagehandle(file, file.page, getfield(s.data, :limit))
+    write_pagehandle(file, pointer(file), getfield(s.data, :limit))
     close_pagehandle(file)
     print("LSMTree.Store{$K, $V} with id $(s.data.first_level[]) closed")
     Blobs.free(s.data)
@@ -72,7 +73,7 @@ function restore(::Type{K},
                  id::Int64) where {K, V, PAGE, PAGE_HANDLE}
     file = "$path/$id.str"
     if isfile_pagehandle(PAGE_HANDLE, file)
-        s::Union{Nothing, Store} = nothing
+        s::Union{Nothing, Store{K, V}} = nothing
         f = open_pagehandle(PAGE_HANDLE, file)
         size = filesize(f)
         page = malloc_page(PAGE, size)

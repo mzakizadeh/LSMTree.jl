@@ -8,13 +8,12 @@ Base.length(t::Table) = t.size[]
 Base.min(t::Table) = t.entries[1].key[]
 Base.max(t::Table) = t.entries[t.size].key[]
 
-# TODO write a better id generator
-function generate_id(::Type{Table}, s::InMemoryData)
-    only_tables_pattern = x -> occursin(r"([0-9])+(.tbl)$", x)
-    file_names = filter(only_tables_pattern, readdir(s.path))
-    length(file_names) == 0 && return 1
-    return findmax(map(x -> parse(Int64, replace(x, ".tbl" => "")), 
-                         file_names))[1] + 1
+function generate_id(::Type{Table}, inmemory::InMemoryData)
+    meta, page = load_meta(inmemory)
+    id = meta.next_table_id[]
+    meta.next_table_id[] += 1
+    save_meta(meta, page, inmemory)
+    return id
 end
 
 function get_table(::Type{Table{K, V}}, 
@@ -33,7 +32,7 @@ function get_table(::Type{Table{K, V}},
         size = filesize(f.stream)
         page = malloc_page(PAGE, size)
         b = Blob{Table{K, V}}(pointer(page), 0, size) 
-        read_pagehandle(PAGE_HANDLE, page, size)
+        read_pagehandle(f, page, size)
         s.table_pages[id] = page
         s.inmemory_tables[b.id[]] = b
         close_pagehandle(f)
@@ -79,11 +78,11 @@ end
 function malloc_and_init(::Type{Table{K, V}}, 
                          inmemory::InMemoryData{PAGE, PAGE_HANDLE}, 
                          args...)::Blob{Table{K, V}} where {K, V, PAGE, PAGE_HANDLE}
-    size = Blobs.self_size(Table) + child_size(Table, args...)
+    size = Blobs.self_size(Table{K, V}) + Blobs.child_size(Table{K, V}, args...)
     page = malloc_page(PAGE, size)
     inmemory.table_pages[args[1]] = page
-    blob = Blob{Table{K, V}}(page.ptr, 0, size)
-    used = init(blob, args...)
+    blob = Blob{Table{K, V}}(pointer(page), 0, size)
+    used = Blobs.init(blob, args...)
     @assert used - blob == size
     blob
 end
@@ -141,10 +140,10 @@ function Base.merge(s::InMemoryData,
         end
         j += 1
     end
-    return Blobs.malloc_and_init(Table{K, V}, 
-                                 s,
-                                 generate_id(Table, s),
-                                 result_entries)
+    return malloc_and_init(Table{K, V}, 
+                           s,
+                           generate_id(Table, s),
+                           result_entries)
 end
 
 function split(t::Blob{Table{K, V}}, s::InMemoryData) where {K, V} 
@@ -157,8 +156,7 @@ function split(t::Blob{Table{K, V}}, s::InMemoryData) where {K, V}
     for i in mid + 1:t.size[]
         push!(t2_entries, t.entries[i][]) 
     end
-    t1 = Blobs.malloc_and_init(Table{K, V}, s, generate_id(Table, s), t1_entries)
-    t2 = Blobs.malloc_and_init(Table{K, V}, s, generate_id(Table, s), t2_entries)
-    t2.id[] = t2.id[] + 1
+    t1 = malloc_and_init(Table{K, V}, s, generate_id(Table, s), t1_entries)
+    t2 = malloc_and_init(Table{K, V}, s, generate_id(Table, s), t2_entries)
     return (t1, t2)
 end
