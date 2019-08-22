@@ -88,22 +88,19 @@ function Base.delete!(s::Store)
 end
 
 function gc(s::Store{K, V}) where {K, V}
-    only_levels_pattern = x -> occursin(r"([0-9])+(.lvl)$", x)
-    only_stores_pattern = x -> occursin(r"([0-9])+(.str)$", x)
-    level_files = filter(only_levels_pattern, readdir(s.inmemory.path))
-    level_ids = sort(map(x -> parse(Int64, replace(x, ".lvl" => "")), 
-                         level_files))
-    store_files = filter(only_stores_pattern, readdir(s.inmemory.path))
-    store_ids = sort(map(x -> parse(Int64, replace(x, ".str" => "")), 
-                         store_files))
+    table_ids = s.inmemory.tables_inuse
+    level_ids = s.inmemory.levels_inuse
+    store_ids = s.inmemory.stores_inuse
     graph = Vector{Tuple{Int64, Int64}}()
+    print(s.inmemory.levels_inuse)
     for id in level_ids
         level = LSMTree.get_level(LSMTree.Level{K, V}, id, s.inmemory)
         level.next_level[] > 0 && push!(graph, (id, level.next_level[]))
     end
     # Mark
     levels = Vector{Int64}()
-    nodes = push!(store_ids, s.data.first_level[])
+    tables = Vector{Int64}()
+    nodes = in(s.data.first_level[], store_ids) ? store_ids : push!(store_ids, s.data.first_level[])
     while !isempty(nodes)
         n = pop!(nodes)
         push!(levels, n)
@@ -112,16 +109,21 @@ function gc(s::Store{K, V}) where {K, V}
         end
     end
     # Sweep
-    files = filter(!only_stores_pattern, readdir(s.inmemory.path))
     for i in levels
         l = LSMTree.get_level(LSMTree.Level{K, V}, i, s.inmemory)[]
         for j in l.tables 
-            filter!(x -> x != "$j.tbl", files)
+            push!(tables, j)
+            deleteat!(table_ids, table_ids .== j)
             # delete!(inmemory_tables, j)
         end
-        filter!(x -> x != "$i.lvl", files)
+        deleteat!(level_ids, level_ids .== i)
         delete!(s.inmemory.inmemory_levels, i)
     end
+    s.inmemory.levels_inuse = levels
+    s.inmemory.tables_inuse = tables
+    table_files = map(id -> "$id.tbl", table_ids)
+    level_files = map(id -> "$id.lvl", level_ids)
+    files = vcat(table_files, level_files)
     for f in files rm("$(s.inmemory.path)/$f", force=true) end
 end
 
@@ -158,12 +160,13 @@ function compact(s::Store{K, V}) where {K, V}
     # Create new level if we didn't find enough space in tree
     if isnothing(next) || isfull(next[])
         last_level = isnothing(next) ? copy(current, s.inmemory) : copy(next, s.inmemory)
-        new_level = Blobs.malloc_and_init(Level{K, V},
-                                          generate_id(Level, s.inmemory),
-                                          Vector{Int64}(),
-                                          Vector{V}(), 0,
-                                          last_level.size[] * s.data.fanout[], 
-                                          s.data.table_threshold_size[])
+        new_level = malloc_and_init(Level{K, V},
+                                    s.inmemory,
+                                    generate_id(Level, s.inmemory),
+                                    Vector{Int64}(),
+                                    Vector{V}(), 0,
+                                    last_level.size[] * s.data.fanout[], 
+                                    s.data.table_threshold_size[])
         new_level.prev_level[] = last_level.id[]
         last_level.next_level[] = new_level.id[]
         set_level(last_level, s.inmemory)
@@ -176,6 +179,7 @@ function compact(s::Store{K, V}) where {K, V}
     while !isfirst(next[]) 
         for table in current.tables[]
             next = compact(s.inmemory, next, get_table(Table{K, V}, table, s.inmemory), force_remove)
+            set_level(next, s.inmemory)
         end
         if !isnothing(after_next) 
             next.next_level[] = after_next.id[]
@@ -204,6 +208,7 @@ function snapshot(s::Store{K, V}) where {K, V}
     file = open_pagehandle(FilePageHandle, path, truncate=true, read=true)
     unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
     close_pagehandle(file)
+    push!(s.inmemory.stores_inuse, s.data.first_level[])
     snapshot = Blobs.malloc_and_init(StoreData{K, V}, s.data.fanout[], 
                                      s.data.first_level_max_size[], 
                                      s.data.table_threshold_size[])
@@ -214,5 +219,7 @@ end
 function remove_snapshot(s::Store)
     path = "$(s.inmemory.path)/$(s.data.first_level[]).str"
     delete_pagehandle(FilePageHandle, path, force=true)
+    stores = s.inmemory.stores_inuse
+    deleteat!(stores, stores .== s.data.first_level[])
     gc(s)
 end

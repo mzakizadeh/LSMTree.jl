@@ -73,13 +73,13 @@ function restore(::Type{K},
                  id::Int64) where {K, V, PAGE, PAGE_HANDLE}
     file = "$path/$id.str"
     if isfile_pagehandle(PAGE_HANDLE, file)
-        s::Union{Nothing, Store{K, V}} = nothing
         f = open_pagehandle(PAGE_HANDLE, file)
         size = filesize(f)
         page = malloc_page(PAGE, size)
         blob = Blob{Level{K, V}}(pointer(page), 0, size)
         read_pagehandle(PAGE_HANDLE, page, size)
         s = Store{K, V}(path, blob)
+        push!(s.inmemory.stores_inuse, id)
         close_pagehandle(f)
         return s
     end

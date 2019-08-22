@@ -20,6 +20,7 @@ function get_table(::Type{Table{K, V}},
                    id::Int64, 
                    s::InMemoryData{PAGE, PAGE_HANDLE}) where {K, V, PAGE, PAGE_HANDLE}
     id <= 0 && return nothing
+    !in(id, s.tables_inuse) && push!(s.tables_inuse, id)
     if in(id, s.tables_queue)
        index = findfirst(x -> x == id, s.tables_queue) 
        deleteat!(s.tables_queue, index)
@@ -80,7 +81,9 @@ function malloc_and_init(::Type{Table{K, V}},
                          args...)::Blob{Table{K, V}} where {K, V, PAGE, PAGE_HANDLE}
     size = Blobs.self_size(Table{K, V}) + Blobs.child_size(Table{K, V}, args...)
     page = malloc_page(PAGE, size)
-    inmemory.table_pages[args[1]] = page
+    id = args[1]
+    inmemory.table_pages[id] = page
+    push!(inmemory.tables_inuse, id)
     blob = Blob{Table{K, V}}(pointer(page), 0, size)
     used = Blobs.init(blob, args...)
     @assert used - blob == size

@@ -1,4 +1,4 @@
-struct InMemoryData{PAGE, PAGE_HANDLE}
+mutable struct InMemoryData{PAGE, PAGE_HANDLE}
     path::String
     table_pages::Dict{Int64, PAGE}
     level_pages::Dict{Int64, PAGE}

@@ -62,7 +62,9 @@ function malloc_and_init(::Type{Level{K, V}},
                          args...)::Blob{Level{K, V}} where {K, V, PAGE, PAGE_HANDLE}
     size = Blobs.self_size(Level{K, V}) + Blobs.child_size(Level{K, V}, args...)
     page = malloc_page(PAGE, size)
-    inmemory.level_pages[args[1]] = page
+    id = args[1]
+    inmemory.level_pages[id] = page
+    push!(inmemory.levels_inuse, id)
     blob = Blob{Level{K, V}}(pointer(page), 0, size)
     used = Blobs.init(blob, args...)
     @assert used - blob == size
@@ -104,6 +106,7 @@ function get_level(::Type{Level{K, V}},
                    id::Int64, 
                    s::InMemoryData{PAGE, PAGE_HANDLE}) where {K, V, PAGE, PAGE_HANDLE}
     id <= 0 && return nothing
+    !in(id, s.levels_inuse) && push!(s.levels_inuse, id)
     haskey(s.inmemory_levels, id) && return s.inmemory_levels[id]
     path = "$(s.path)/$id.lvl"
     if isfile_pagehandle(PAGE_HANDLE, path)
