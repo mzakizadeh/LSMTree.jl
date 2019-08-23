@@ -92,7 +92,6 @@ function gc(s::Store{K, V}) where {K, V}
     level_ids = s.inmemory.levels_inuse
     store_ids = s.inmemory.stores_inuse
     graph = Vector{Tuple{Int64, Int64}}()
-    print(s.inmemory.levels_inuse)
     for id in level_ids
         level = LSMTree.get_level(LSMTree.Level{K, V}, id, s.inmemory)
         level.next_level[] > 0 && push!(graph, (id, level.next_level[]))
