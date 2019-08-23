@@ -31,6 +31,3 @@ function lub(v::Union{Vector, BlobVector},
     !p(lo) && return length(v)
     lo
 end
-
-isnothing(::Any) = false
-isnothing(::Nothing) = true

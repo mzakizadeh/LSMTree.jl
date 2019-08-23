@@ -17,14 +17,14 @@ include("iterator.jl")
 function Base.get(s::Store{K, V}, key) where {K, V}
     key = convert(K, key) 
     result = get(s.buffer, key)
-    if !isnothing(result) 
+    if result !== nothing 
         result.deleted && return nothing
         return result.val
     end
     l = get_level(Level{K, V}, s.data.first_level[], s.inmemory)
-    while !isnothing(l)
+    while l !== nothing
         result = get(l[], key, s.inmemory)
-        if !isnothing(result)
+        if result !== nothing
             result.deleted && return nothing
             return result.val
         end
@@ -61,7 +61,7 @@ function Base.close(s::Store{K, V}) where {K, V}
                            read=true)
     write_pagehandle(file, pointer(file), getfield(s.data, :limit))
     close_pagehandle(file)
-    print("LSMTree.Store{$K, $V} with id $(s.data.first_level[]) closed")
+    @info "LSMTree.Store{$K, $V} with id $(s.data.first_level[]) closed"
     Blobs.free(s.data)
 end
 

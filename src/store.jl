@@ -7,7 +7,7 @@ mutable struct Store{K, V, PAGE, PAGE_HANDLE}
         buffer_max_size::Int=125000, 
         table_threshold_size::Int=125000
     ) where {K, V, PAGE, PAGE_HANDLE} 
-        @assert !isdir_pagehandle(PAGE_HANDLE, path) "Directory already exists! Try using restore function."
+        @error !isdir_pagehandle(PAGE_HANDLE, path) "Directory already exists! Try using restore function."
         mkpath_pagehandle(PAGE_HANDLE, path)
         data = Blobs.malloc_and_init(StoreData{K, V}, 
                                      2, buffer_max_size * 2, 
@@ -48,7 +48,7 @@ Base.show(io::IO, s::Store{K, V}) where {K, V} = print(io, "LSMTree.Store{$K, $V
 function Base.length(s::Store{K, V}) where {K, V}
     len = length(s.buffer.entries)
     l = get_level(Level{K, V}, s.data.first_level[], s.inmemory)
-    while !isnothing(l) 
+    while l !== nothing 
         len += l.size[] 
         l = get_level(Level{K, V}, l.next_level[], s.inmemory)
     end
@@ -67,7 +67,7 @@ function buffer_dump(s::Store{K, V}) where {K, V}
 
     current = l
     next = get_level(Level{K, V}, l.next_level[], s.inmemory)
-    while !isnothing(next) 
+    while next !== nothing 
         next = copy(next, s.inmemory)
         next.prev_level[] = current.id[] 
         current.next_level[] = next.id[]
@@ -131,10 +131,10 @@ function compact(s::Store{K, V}) where {K, V}
     !isempty(s.data[]) && !isfull(get_level(Level{K, V}, s.data.first_level[], s.inmemory)[]) && return
     # Find first level that has enough empty space
     current = get_level(Level{K, V}, s.data.first_level[], s.inmemory)
-    next = !isnothing(current) ? 
+    next = current !== nothing ? 
                     get_level(Level{K, V}, current.next_level[], s.inmemory) : nothing
     force_remove = false
-    while !isnothing(next) && !islast(next[])
+    while next !== nothing && !islast(next[])
         if !isfull(next[])
             force_remove = islast(next[])
             break
@@ -143,7 +143,7 @@ function compact(s::Store{K, V}) where {K, V}
         next = get_level(Level{K, V}, next.next_level[], s.inmemory)
     end
     # Create and return new level if tree has no level
-    if isnothing(current)
+    if current === nothing
         new_level = malloc_and_init(Level{K, V}, 
                                     s.inmemory,
                                     generate_id(Level, s.inmemory),
@@ -157,8 +157,8 @@ function compact(s::Store{K, V}) where {K, V}
         return
     end
     # Create new level if we didn't find enough space in tree
-    if isnothing(next) || isfull(next[])
-        last_level = isnothing(next) ? copy(current, s.inmemory) : copy(next, s.inmemory)
+    if next === nothing || isfull(next[])
+        last_level = next === nothing ? copy(current, s.inmemory) : copy(next, s.inmemory)
         new_level = malloc_and_init(Level{K, V},
                                     s.inmemory,
                                     generate_id(Level, s.inmemory),
@@ -180,7 +180,7 @@ function compact(s::Store{K, V}) where {K, V}
             next = compact(s.inmemory, next, get_table(Table{K, V}, table, s.inmemory), force_remove)
             set_level(next, s.inmemory)
         end
-        if !isnothing(after_next) 
+        if after_next !== nothing 
             next.next_level[] = after_next.id[]
             after_next.prev_level[] = next.id[]
             set_level(after_next, s.inmemory)
@@ -202,7 +202,7 @@ end
 function snapshot(s::Store{K, V}) where {K, V}
     buffer_dump(s)
     # The id of first level is always unique
-    # Therefore we also used it as store id
+    # Therefore we also use it as the store id
     path = "$(s.inmemory.path)/$(s.data.first_level[]).str"
     file = open_pagehandle(FilePageHandle, path, truncate=true, read=true)
     unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
