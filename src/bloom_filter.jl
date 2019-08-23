@@ -150,6 +150,15 @@ function Blobs.init(bf::Blob{BloomFilter},
     free
 end
 
+function Blobs.malloc_and_init(::Type{BloomFilter}, args...)::Blob{BloomFilter}
+    size = Blobs.self_size(BloomFilter) + child_size(BloomFilter, args...)
+    page = malloc_page(MemoryPage, size)
+    blob = Blob{BloomFilter}(page.ptr, 0, size)
+    used = init(blob, args...)
+    @assert used - blob == size
+    blob
+end
+
 function hash_n(key::Any, k::Int, max::Int)
     a_hash = hash(key, UInt(0))
     b_hash = hash(key, UInt(170))

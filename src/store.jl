@@ -1,23 +1,45 @@
-mutable struct Store{K, V}
+mutable struct Store{K, V, PAGE, PAGE_HANDLE}
     buffer::Buffer{K, V}
     data::Blob{StoreData{K, V}}
-    inmemory::InMemoryData
-    function Store{K, V}(path::String="./db",
-                         buffer_max_size::Integer=125000, 
-                         table_threshold_size::Integer=125000) where {K, V} 
-        @error !isdir(path) "Directory already exists! Try using restore function."
-        mkpath(path)
-        data = Blobs.malloc_and_init(StoreData{K, V}, 2, 
-                                     buffer_max_size * 2, 
+    inmemory::InMemoryData{PAGE, PAGE_HANDLE}
+    function Store{K, V, PAGE, PAGE_HANDLE}(
+        path::String="./db",
+        buffer_max_size::Int=125000, 
+        table_threshold_size::Int=125000
+    ) where {K, V, PAGE, PAGE_HANDLE} 
+        @error !isdir_pagehandle(PAGE_HANDLE, path) "Directory already exists! Try using restore function."
+        mkpath_pagehandle(PAGE_HANDLE, path)
+        data = Blobs.malloc_and_init(StoreData{K, V}, 
+                                     2, buffer_max_size * 2, 
                                      table_threshold_size)
-        new{K, V}(Buffer{K, V}(buffer_max_size), 
-                  data,
-                  InMemoryData(path))
+        new{K, V, PAGE, PAGE_HANDLE}(Buffer{K, V}(buffer_max_size), 
+                                     data,
+                                     InMemoryData{PAGE, PAGE_HANDLE}(path))
     end
-    Store{K, V}(path::String, data::Blob{StoreData{K, V}}) where {K, V} =
-        new{K, V}(Buffer{K, V}(floor(Int64, data.first_level_max_size[] / 2)), 
-                  data,
-                  InMemoryData(path))
+    function Store{K, V, PAGE, PAGE_HANDLE}(
+        path::String, 
+        data::Blob{StoreData{K, V}}
+    ) where {K, V, PAGE, PAGE_HANDLE}
+        buffer_max_size = floor(Int64, data.first_level_max_size[] / 2)
+        new{K, V, PAGE, PAGE_HANDLE}(
+            Buffer{K, V}(buffer_max_size), 
+            data,
+            InMemoryData{PAGE, PAGE_HANDLE}(path)
+        )
+    end
+end
+
+function Store{K, V}(path::String="./db", 
+                     buffer_max_size::Int=125000, 
+                     table_threshold_size::Int=125000) where {K, V} 
+    Store{K, V, MemoryPage, FilePageHandle}(path, 
+                                            buffer_max_size, 
+                                            table_threshold_size)
+end
+
+function Store{K, V}(path::String,
+                     data::Blob{StoreData{K, V}}) where {K, V} 
+    Store{K, V, MemoryPage, FilePageHandle}(path, data)
 end
 
 Base.isempty(s::StoreData{K, V}) where {K, V} = s.first_level <= 0
@@ -66,14 +88,9 @@ function Base.delete!(s::Store)
 end
 
 function gc(s::Store{K, V}) where {K, V}
-    only_levels_pattern = x -> occursin(r"([0-9])+(.lvl)$", x)
-    only_stores_pattern = x -> occursin(r"([0-9])+(.str)$", x)
-    level_files = filter(only_levels_pattern, readdir(s.inmemory.path))
-    level_ids = sort(map(x -> parse(Int64, replace(x, ".lvl" => "")), 
-                         level_files))
-    store_files = filter(only_stores_pattern, readdir(s.inmemory.path))
-    store_ids = sort(map(x -> parse(Int64, replace(x, ".str" => "")), 
-                         store_files))
+    table_ids = s.inmemory.tables_inuse
+    level_ids = s.inmemory.levels_inuse
+    store_ids = s.inmemory.stores_inuse
     graph = Vector{Tuple{Int64, Int64}}()
     for id in level_ids
         level = LSMTree.get_level(LSMTree.Level{K, V}, id, s.inmemory)
@@ -81,7 +98,8 @@ function gc(s::Store{K, V}) where {K, V}
     end
     # Mark
     levels = Vector{Int64}()
-    nodes = push!(store_ids, s.data.first_level[])
+    tables = Vector{Int64}()
+    nodes = in(s.data.first_level[], store_ids) ? store_ids : push!(store_ids, s.data.first_level[])
     while !isempty(nodes)
         n = pop!(nodes)
         push!(levels, n)
@@ -90,16 +108,21 @@ function gc(s::Store{K, V}) where {K, V}
         end
     end
     # Sweep
-    files = filter(!only_stores_pattern, readdir(s.inmemory.path))
     for i in levels
         l = LSMTree.get_level(LSMTree.Level{K, V}, i, s.inmemory)[]
         for j in l.tables 
-            filter!(x -> x != "$j.tbl", files)
+            push!(tables, j)
+            deleteat!(table_ids, table_ids .== j)
             # delete!(inmemory_tables, j)
         end
-        filter!(x -> x != "$i.lvl", files)
+        deleteat!(level_ids, level_ids .== i)
         delete!(s.inmemory.inmemory_levels, i)
     end
+    s.inmemory.levels_inuse = levels
+    s.inmemory.tables_inuse = tables
+    table_files = map(id -> "$id.tbl", table_ids)
+    level_files = map(id -> "$id.lvl", level_ids)
+    files = vcat(table_files, level_files)
     for f in files rm("$(s.inmemory.path)/$f", force=true) end
 end
 
@@ -121,13 +144,14 @@ function compact(s::Store{K, V}) where {K, V}
     end
     # Create and return new level if tree has no level
     if current === nothing
-        new_level = Blobs.malloc_and_init(Level{K, V}, 
-                                          generate_id(Level, s.inmemory),
-                                          Vector{Int64}(),
-                                          Vector{V}(), 
-                                          0, 
-                                          s.buffer.max_size * s.data.fanout[], 
-                                          s.data.table_threshold_size[])
+        new_level = malloc_and_init(Level{K, V}, 
+                                    s.inmemory,
+                                    generate_id(Level, s.inmemory),
+                                    Vector{Int64}(),
+                                    Vector{V}(), 
+                                    0, 
+                                    s.buffer.max_size * s.data.fanout[], 
+                                    s.data.table_threshold_size[])
         set_level(new_level, s.inmemory)
         s.data.first_level[] = new_level.id[]
         return
@@ -135,13 +159,13 @@ function compact(s::Store{K, V}) where {K, V}
     # Create new level if we didn't find enough space in tree
     if next === nothing || isfull(next[])
         last_level = next === nothing ? copy(current, s.inmemory) : copy(next, s.inmemory)
-        new_level = Blobs.malloc_and_init(Level{K, V},
-                                          generate_id(Level, s.inmemory),
-                                          Vector{Int64}(),
-                                          Vector{V}(), 0,
-                                          last_level.size[] * s.data.fanout[], 
-                                          s.data.table_threshold_size[])
-        new_level.id[] += 1
+        new_level = malloc_and_init(Level{K, V},
+                                    s.inmemory,
+                                    generate_id(Level, s.inmemory),
+                                    Vector{Int64}(),
+                                    Vector{V}(), 0,
+                                    last_level.size[] * s.data.fanout[], 
+                                    s.data.table_threshold_size[])
         new_level.prev_level[] = last_level.id[]
         last_level.next_level[] = new_level.id[]
         set_level(last_level, s.inmemory)
@@ -154,6 +178,7 @@ function compact(s::Store{K, V}) where {K, V}
     while !isfirst(next[]) 
         for table in current.tables[]
             next = compact(s.inmemory, next, get_table(Table{K, V}, table, s.inmemory), force_remove)
+            set_level(next, s.inmemory)
         end
         if after_next !== nothing 
             next.next_level[] = after_next.id[]
@@ -162,8 +187,6 @@ function compact(s::Store{K, V}) where {K, V}
         end
         current_isfirst = isfirst(current[])
         current = empty(current, s.inmemory)
-        # TODO problem with generating new id
-        current.id[] += 1
         current.next_level[] = next.id[]
         next.prev_level[] = current.id[]
         if current_isfirst s.data.first_level[] = current.id[] end
@@ -180,9 +203,11 @@ function snapshot(s::Store{K, V}) where {K, V}
     buffer_dump(s)
     # The id of first level is always unique
     # Therefore we also use it as the store id
-    open("$(s.inmemory.path)/$(s.data.first_level[]).str", "w+") do file
-        unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
-    end
+    path = "$(s.inmemory.path)/$(s.data.first_level[]).str"
+    file = open_pagehandle(FilePageHandle, path, truncate=true, read=true)
+    unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
+    close_pagehandle(file)
+    push!(s.inmemory.stores_inuse, s.data.first_level[])
     snapshot = Blobs.malloc_and_init(StoreData{K, V}, s.data.fanout[], 
                                      s.data.first_level_max_size[], 
                                      s.data.table_threshold_size[])
@@ -191,6 +216,9 @@ function snapshot(s::Store{K, V}) where {K, V}
 end
 
 function remove_snapshot(s::Store)
-    rm("$(s.inmemory.path)/$(s.data.first_level[]).str", force=true)
+    path = "$(s.inmemory.path)/$(s.data.first_level[]).str"
+    delete_pagehandle(FilePageHandle, path, force=true)
+    stores = s.inmemory.stores_inuse
+    deleteat!(stores, stores .== s.data.first_level[])
     gc(s)
 end

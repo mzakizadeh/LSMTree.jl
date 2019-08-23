@@ -1,9 +1,11 @@
 module LSMTree
 using Blobs
 
+include("interface.jl")
 include("utils.jl")
 include("entry.jl")
 include("inmemory_data.jl")
+include("meta_data.jl")
 include("bloom_filter.jl")
 include("table.jl")
 include("buffer.jl")
@@ -51,24 +53,34 @@ function Base.close(s::Store{K, V}) where {K, V}
     buffer_dump(s)
     # The id of first level is always unique
     # Therefore we also used it as store id
-    open("$(s.inmemory.path)/$(s.data.first_level[]).str", "w+") do file
-        unsafe_write(file, pointer(s.data), getfield(s.data, :limit))
-    end
+    path = "$(s.inmemory.path)/$(s.data.first_level[]).str"
+    file = open_pagehandle(FilePageHandle, 
+                           path, 
+                           pointer(s.data), 
+                           truncate=true, 
+                           read=true)
+    write_pagehandle(file, pointer(file), getfield(s.data, :limit))
+    close_pagehandle(file)
     @info "LSMTree.Store{$K, $V} with id $(s.data.first_level[]) closed"
     Blobs.free(s.data)
 end
 
-function restore(::Type{K}, ::Type{V}, path::String, id::Int64) where {K, V}
+function restore(::Type{K}, 
+                 ::Type{V}, 
+                 ::Type{PAGE},
+                 ::Type{PAGE_HANDLE},
+                 path::String, 
+                 id::Int64) where {K, V, PAGE, PAGE_HANDLE}
     file = "$path/$id.str"
-    if isfile(file)
-        s::Union{Nothing, Store{K, V}} = nothing
-        open(file) do f
-            size = filesize(f)
-            p = Libc.malloc(size)
-            b = Blob{StoreData{K, V}}(p, 0, size) 
-            unsafe_read(f, p, size)
-            s = Store{K, V}(path, b)
-        end
+    if isfile_pagehandle(PAGE_HANDLE, file)
+        f = open_pagehandle(PAGE_HANDLE, file)
+        size = filesize(f)
+        page = malloc_page(PAGE, size)
+        blob = Blob{Level{K, V}}(pointer(page), 0, size)
+        read_pagehandle(PAGE_HANDLE, page, size)
+        s = Store{K, V}(path, blob)
+        push!(s.inmemory.stores_inuse, id)
+        close_pagehandle(f)
         return s
     end
     nothing
