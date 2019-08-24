@@ -4,7 +4,7 @@ struct MemoryPage <: Page
    _ptr::Ptr
 end
 
-pointer(page::MemoryPage) = page._ptr
+Base.pointer(page::MemoryPage) = page._ptr
 
 function malloc_page(::Type{T}, size::Int)::T where {T <: Page}
     error("Not implemented")
@@ -28,6 +28,8 @@ struct FilePageHandle
     id::String
     stream::IOStream
 end
+
+Base.size(f::FilePageHandle) = filesize(f.stream)
 
 function open_pagehandle(::Type{T}, 
                          id::AbstractString; 

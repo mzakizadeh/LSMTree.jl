@@ -35,7 +35,7 @@ function load_meta(s::AbstractStore{<:Any, <:Any, PAGE, PAGE_HANDLE}) where {PAG
     path = "$(s.path)/.meta"
     if isfile_pagehandle(PAGE_HANDLE, path)
         f = open_pagehandle(PAGE_HANDLE, path)
-        size = filesize(f.stream)
+        size = size(f)
         page = malloc_page(PAGE, size)
         blob = Blob{MetaData}(pointer(page), 0, size)
         read_pagehandle(f, page, size)

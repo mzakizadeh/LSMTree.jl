@@ -75,7 +75,7 @@ function restore(::Type{K},
     file = "$path/$id.str"
     if isfile_pagehandle(PAGE_HANDLE, file)
         f = open_pagehandle(PAGE_HANDLE, file)
-        size = filesize(f)
+        size = size(f)
         page = malloc_page(PAGE, size)
         blob = Blob{Level{K, V}}(pointer(page), 0, size)
         read_pagehandle(PAGE_HANDLE, page, size)
@@ -94,7 +94,7 @@ function restore(::Type{K},
     file = "$path/$id.str"
     if isfile_pagehandle(FilePageHandle, file)
         f = open_pagehandle(FilePageHandle, file)
-        size = filesize(f.stream)
+        size = size(f)
         page = malloc_page(MemoryPage, size)
         blob = Blob{StoreData{K, V}}(pointer(page), 0, size)
         read_pagehandle(f, page, size)
