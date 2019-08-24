@@ -5,15 +5,15 @@ end
 
 Blobs.child_size(::Type{MetaData}) = 0
 
-function Blobs.init(b::Blob{MetaData}, free::Blob{Nothing})
-    b.next_table_id[] = 1
-    b.next_level_id[] = 1
+function Blobs.init(blob::Blob{MetaData}, free::Blob{Nothing})
+    blob.next_table_id[] = 1
+    blob.next_level_id[] = 1
     free
 end
 
 function malloc_and_init(::Type{MetaData}, 
-                         inmemory::InMemoryData{PAGE, PAGE_HANDLE}, 
-                         args...) where {PAGE, PAGE_HANDLE}
+                         s::AbstractStore{<:Any, <:Any, PAGE, <:Any}, 
+                         args...) where PAGE
     size = Blobs.self_size(MetaData) + Blobs.child_size(MetaData, args...)
     page = malloc_page(PAGE, size)
     blob = Blob{MetaData}(pointer(page), 0, size)
@@ -24,15 +24,15 @@ end
 
 function save_meta(meta::Blob{MetaData},
                    page:: PAGE,
-                   inmemory::InMemoryData{PAGE, PAGE_HANDLE}) where {PAGE, PAGE_HANDLE}
-    path = "$(inmemory.path)/.meta"
+                   s::AbstractStore{<:Any, <:Any, PAGE, PAGE_HANDLE}) where {PAGE, PAGE_HANDLE}
+    path = "$(s.path)/.meta"
     file = open_pagehandle(PAGE_HANDLE, path, truncate=true, read=true)
     write_pagehandle(file, page, getfield(meta, :limit))
     close_pagehandle(file)
 end
 
-function load_meta(inmemory::InMemoryData{PAGE, PAGE_HANDLE}) where {PAGE, PAGE_HANDLE}
-    path = "$(inmemory.path)/.meta"
+function load_meta(s::AbstractStore{<:Any, <:Any, PAGE, PAGE_HANDLE}) where {PAGE, PAGE_HANDLE}
+    path = "$(s.path)/.meta"
     if isfile_pagehandle(PAGE_HANDLE, path)
         f = open_pagehandle(PAGE_HANDLE, path)
         size = filesize(f.stream)
@@ -42,5 +42,5 @@ function load_meta(inmemory::InMemoryData{PAGE, PAGE_HANDLE}) where {PAGE, PAGE_
         close_pagehandle(f)
         return blob, page
     end
-    return malloc_and_init(MetaData, inmemory)
+    return malloc_and_init(MetaData, s)
 end
