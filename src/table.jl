@@ -75,7 +75,7 @@ function get_table(id::Int64,
     path = "$(s.path)/$id.tbl"
     if isfile_pagehandle(PAGE_HANDLE, path)
         f = open_pagehandle(PAGE_HANDLE, path)
-        size = size(f)
+        size = size_pagehandle(f)
         page = malloc_page(PAGE, size)
         b = Blob{Table{K, V}}(pointer(page), 0, size) 
         read_pagehandle(f, page, size)
