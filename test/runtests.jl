@@ -23,7 +23,7 @@ s = LSMTree.Store{Int32, Int32}()
 println("Read random")
 randoms2 = shuffle(randoms)
 @time read_random(s, randoms)
-delete!(s)
+rm("./db", force=true, recursive=true)
 
 # # Table
 

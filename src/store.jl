@@ -90,7 +90,7 @@ function buffer_dump(store::AbstractStore{K, V}) where {K, V}
     empty!(store.buffer)
 end
 
-function gc(store::AbstractStore{K, V}) where {K, V}
+function gc(store::AbstractStore{K, V, PAGE, PAGE_HANDLE}) where {K, V, PAGE, PAGE_HANDLE}
     table_ids = store.inmemory.table_ids_inuse
     level_ids = store.inmemory.level_ids_inuse
     store_ids = store.inmemory.store_ids_inuse
@@ -119,14 +119,25 @@ function gc(store::AbstractStore{K, V}) where {K, V}
             # TODO remove the deleted table form memory (maybe?)
         end
         deleteat!(level_ids, level_ids .== i)
-        delete!(store.inmemory.levels, i)
     end
     store.inmemory.level_ids_inuse = levels
     store.inmemory.table_ids_inuse = tables
-    table_files = map(id -> "$id.tbl", table_ids)
-    level_files = map(id -> "$id.lvl", level_ids)
-    files = vcat(table_files, level_files)
-    for f in files rm("$(store.path)/$f", force=true) end
+    for deleted_id in table_ids
+        # deleted_id_page = store.inmemory.table_pages[deleted_id]
+        # deleteat!(store.inmemory.tables_queue, 
+        #           store.inmemory.tables_queue .= deleted_id)
+        # delete!(store.inmemory.tables, deleted_id)
+        # delete!(store.inmemory.table_pages, deleted_id)
+        # free_page(deleted_id_page)
+        delete_pagehandle(PAGE_HANDLE, "$(store.path)/$deleted_id.tbl", force=true)
+    end
+    for deleted_id in level_ids
+        deleted_id_page = store.inmemory.level_pages[deleted_id]
+        delete!(store.inmemory.levels, deleted_id)
+        delete!(store.inmemory.level_pages, deleted_id)
+        free_page(deleted_id_page)
+        delete_pagehandle(PAGE_HANDLE, "$(store.path)/$deleted_id.lvl", force=true)
+    end
 end
 
 function compact(store::AbstractStore{K, V}) where {K, V}

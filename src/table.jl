@@ -83,8 +83,12 @@ function get_table(id::Int64,
         s.inmemory.tables[b.id[]] = b
         close_pagehandle(f)
         pushfirst!(s.inmemory.tables_queue, id)
-        if length(s.inmemory.tables_queue) > 100 
-            delete!(s.inmemory.tables, pop!(s.inmemory.tables_queue))
+        if length(s.inmemory.tables_queue) > 5
+            deleted_id = pop!(s.inmemory.tables_queue)
+            deleted_id_page = s.inmemory.table_pages[deleted_id]
+            delete!(s.inmemory.tables, deleted_id)
+            delete!(s.inmemory.table_pages, deleted_id)
+            free_page(deleted_id_page)
         end
         return s.inmemory.tables[id]
     end
