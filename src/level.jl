@@ -181,56 +181,64 @@ function Base.merge(store::AbstractStore,
     result_tables, result_bounds = Vector{Int64}(), Vector{K}()
     if length(indices) < 3 # If the level has at most one table
         if length(level.tables[]) > 0
-            table = merge(store, 
-                          get_table(level.tables[1][], store), 
-                          entries, 
-                          indices[1], 
-                          indices[2], 
-                          false)
+            table, page = merge(store, 
+                                get_table(level.tables[1][], store), 
+                                entries, 
+                                indices[1], 
+                                indices[2], 
+                                false)
         else
             v = Vector{Entry{K, V}}()
             for i in 1:length(entries)
                 push!(v, entries[i])
             end
-            table = malloc_and_init(Table{K, V},
-                                    store, 
-                                    generate_id(Table, store), 
-                                    v)
+            table, page = malloc_and_init(Table{K, V},
+                                          store,
+                                          generate_id(Table, store), 
+                                          v)
         end
         if table.size[] > level.table_threshold_size[]
-            (t1, t2) = split(table, store)
+            (t1, p1), (t2, p2) = split(table, store)
             set_table(t1, store)
             push!(result_tables, t1.id[])
             push!(result_bounds, max(t1[]))
             set_table(t2, store)
             push!(result_tables, t2.id[])
             push!(result_bounds, max(t2[]))
+            free_page(page)
+            free_page(p1)
+            free_page(p2)
         else
             set_table(table, store)
             push!(result_tables, table.id[])
             push!(result_bounds, max(table[]))
+            free_page(page)
         end
     else # If the level at least two tables
         for i in 1:length(level.tables[])
             if indices[i + 1] - indices[i] > 0
-                table = merge(store, 
-                              get_table(level.tables[i][], store), 
-                              entries, 
-                              indices[i], 
-                              indices[i + 1], 
-                              false)
+                table, page = merge(store, 
+                                    get_table(level.tables[i][], store), 
+                                    entries, 
+                                    indices[i], 
+                                    indices[i + 1], 
+                                    false)
                 if table.size[] > level.table_threshold_size[]
-                    (t1, t2) = split(table, store)
+                    (t1, p1), (t2, p2) = split(table, store)
                     set_table(t1, store)
                     push!(result_tables, t1.id[])
                     push!(result_bounds, max(t1[]))
                     set_table(t2, store)
                     push!(result_tables, t2.id[])
                     push!(result_bounds, max(t2[]))
+                    free_page(page)
+                    free_page(p1)
+                    free_page(p2)
                 else
                     set_table(table, store)
                     push!(result_tables, table.id[])
                     push!(result_bounds, max(table[]))
+                    free_page(page)
                 end
             else 
                 push!(result_tables, level.tables[i][])

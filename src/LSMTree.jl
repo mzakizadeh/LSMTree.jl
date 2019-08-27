@@ -19,17 +19,17 @@ include("iterator.jl")
 function Base.get(s::AbstractStore{K, V}, key) where {K, V}
     key = convert(K, key) 
     result = get(s.buffer, key)
-    if result !== nothing 
+    if result !== nothing
         result.deleted && return nothing
         return result.val
     end
     l = get_level(s.data.first_level[], s)
     while l !== nothing
-        result = get(l[], key, s)
-        if result !== nothing
-            result.deleted && return nothing
-            return result.val
-        end
+            result = get(l[], key, s)
+            if result !== nothing
+                result.deleted && return nothing
+                return result.val
+            end
         l = get_level(l.next_level[], s)
     end
     nothing
@@ -63,7 +63,7 @@ function Base.close(s::AbstractStore{K, V}) where {K, V}
     write_pagehandle(file, s.data_page, getfield(s.data, :limit))
     close_pagehandle(file)
     @info "LSMTree.Store{$K, $V} with id $(s.data.first_level[]) closed"
-    Blobs.free(s.data)
+    free_page(s.data_page)
 end
 
 function restore(::Type{K}, 
