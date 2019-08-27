@@ -29,6 +29,8 @@ struct FilePageHandle
     stream::IOStream
 end
 
+size_pagehandle(f::FilePageHandle) = filesize(f.stream)
+
 function open_pagehandle(::Type{T}, 
                          id::AbstractString; 
                          keywords...)::T where {T <: PageHandle}

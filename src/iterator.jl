@@ -5,34 +5,34 @@ mutable struct LevelState{K, V}
     done::Bool
 end
 
-function next_state(s::LevelState{K, V}, 
-                    l::Level{K, V}, 
-                    inmemory::InMemoryData) where {K, V}
-    s.entry_index += 1
-    t = get_table(Table{K, V}, l.tables[s.table_index], inmemory)[]
-    if s.entry_index > t.size
-        s.entry_index = 1
-        s.table_index += 1
-        s.done = s.table_index > length(l.tables)
-        if !s.done 
-            t = get_table(Table{K, V}, l.tables[s.table_index], inmemory)[]
+function next_state(state::LevelState{K, V}, 
+                    level::Level{K, V},
+                    store::AbstractStore{K, V, <:Any, <:Any}) where {K, V}
+    state.entry_index += 1
+    t = get_table(level.tables[state.table_index], store)[]
+    if state.entry_index > t.size
+        state.entry_index = 1
+        state.table_index += 1
+        state.done = state.table_index > length(level.tables)
+        if !state.done 
+            t = get_table(level.tables[state.table_index], store)[]
         end
     end
-    s.entry = t.entries[s.entry_index]
+    state.entry = t.entries[state.entry_index]
 end
 
 struct Iterator{K, V}
     levels::Vector{Level{K, V}}
-    store::Store{K, V}
-    function Iterator(s::Store{K, V}) where {K, V}
-        snapshot = LSMTree.snapshot(s)
+    store::AbstractStore{K, V, <:Any, <:Any}
+    function Iterator(store::AbstractStore{K, V, <:Any, <:Any}) where {K, V}
+        snapshot = LSMTree.snapshot(store)
         levels = Vector{Level{K, V}}()
-        l = get_level(Level{K, V}, snapshot.first_level[], s.inmemory)
+        l = get_level(snapshot.first_level[], store)
         while l !== nothing
             push!(levels, l[])
-            l = get_level(Level{K, V}, l.next_level[], s.inmemory)
+            l = get_level(l.next_level[], store)
         end
-        new{K, V}(levels, s)
+        new{K, V}(levels, store)
     end
 end
 
@@ -44,13 +44,11 @@ end
 function iter_init(iter::Iterator{K, V}) where {K, V}
     levels_state = Vector{LevelState{K, V}}()
     first_index = 0
-    first = nothing
+    first::Union{Nothing, Entry} = nothing
     # Initialize level states
     for i in 1:length(iter.levels)
         table_index = 1
-        t = get_table(Table{K, V}, 
-                      iter.levels[i].tables[table_index], 
-                      iter.store.inmemory)[]
+        t = get_table(iter.levels[i].tables[table_index], iter.store)[]
         entry_index = 1
         entry = t.entries[entry_index]
         if first === nothing || entry < first 
@@ -66,7 +64,7 @@ function iter_init(iter::Iterator{K, V}) where {K, V}
     while isdeleted(first)
         for i in 1:length(iter.levels)
             if !levels_state[i].done && first.key == levels_state[i].entry.key
-                next_state(levels_state[i], iter.levels[i], iter.store.inmemory)
+                next_state(levels_state[i], iter.levels[i], iter.store)
             end
         end
         first_index = 0
@@ -80,7 +78,7 @@ function iter_init(iter::Iterator{K, V}) where {K, V}
     end
     for i in 1:length(iter.levels)
         if !levels_state[i].done && first.key == levels_state[i].entry.key
-            next_state(levels_state[i], iter.levels[i], iter.store.inmemory)
+            next_state(levels_state[i], iter.levels[i], iter.store)
         end
     end
     return (first, IteratorState{K, V}(levels_state, length(iter.store) == 0))
@@ -105,10 +103,10 @@ function iter_next(iter::Iterator, state)
             state.done = true
             return (e, (nothing, state))
         end
-        # We use for loop so we don't reiterate old duplicated data
+        # We use loop here to skip duplicated entries
         for i in 1:length(iter.levels)
             if !state.levels_state[i].done && next.key == state.levels_state[i].entry.key
-                next_state(state.levels_state[i], iter.levels[i], iter.store.inmemory)
+                next_state(state.levels_state[i], iter.levels[i], iter.store)
             end
         end
     end
@@ -118,10 +116,10 @@ end
 function seek_lub_search(iter::Iterator{K, V}, state::IteratorState, key) where {K, V}
     key = convert(K, key)
     min_index = 0
-    min = nothing
+    min::Union{Nothing, Entry} = nothing
     for i in 1:length(iter.levels)
         table_index = key_table_index(iter.levels[i], key)
-        table = get_table(Table{K, V}, iter.levels[i].tables[table_index], iter.store.inmemory)
+        table = get_table(iter.levels[i].tables[table_index], iter.store)
         entry_index = lub(table.entries[], 1, table.size[], key)
         if entry_index > table.size[] 
             state.levels_state[i].done = true
@@ -135,7 +133,7 @@ function seek_lub_search(iter::Iterator{K, V}, state::IteratorState, key) where 
             min = state.levels_state[i].entry
         end
     end
-    next_state(state.levels_state[min_index], iter.levels[min_index], iter.store.inmemory) 
+    next_state(state.levels_state[min_index], iter.levels[min_index], iter.store) 
     return (min, state)
 end
 

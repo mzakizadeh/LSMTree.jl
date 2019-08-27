@@ -134,19 +134,19 @@ function Blobs.child_size(::Type{BloomFilter},
     +(Blobs.child_size(fieldtype(T, :array), n_bits))
   end
 
-function Blobs.init(bf::Blob{BloomFilter}, 
+function Blobs.init(blob::Blob{BloomFilter}, 
                     free::Blob{Nothing}, 
                     capacity::Int64, 
                     error_rate::Float64, 
                     k_hashes::Int64)
     bits_per_elem, error_rate = get_k_error(error_rate, k_hashes)
     n_bits = capacity * bits_per_elem
-    free = Blobs.init(bf.array, free, n_bits)
-    fill!(bf.array[], false)
-    bf.k[] = k_hashes
-    bf.capacity[] = capacity
-    bf.error_rate[] = error_rate
-    bf.n_bits[] = n_bits
+    free = Blobs.init(blob.array, free, n_bits)
+    fill!(blob.array[], false)
+    blob.k[] = k_hashes
+    blob.capacity[] = capacity
+    blob.error_rate[] = error_rate
+    blob.n_bits[] = n_bits
     free
 end
 
