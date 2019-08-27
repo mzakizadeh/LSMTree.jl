@@ -1,4 +1,4 @@
-number = 10000000
+number = 1000000
 
 function write_seq(s::LSMTree.Store{Int32, Int32}, vals::Vector{Tuple{Int32, Int32}})
     for i in 1:number

@@ -42,7 +42,7 @@ end
 
 function malloc_and_init(::Type{Table{K, V}}, 
                          s::AbstractStore{K, V, PAGE, <:Any}, 
-                         args...)::Blob{Table{K, V}} where {K, V, PAGE}
+                         args...) where {K, V, PAGE}
     T = Table{K, V}
     size = Blobs.self_size(Table{K, V}) + Blobs.child_size(Table{K, V}, args...)
     page = malloc_page(PAGE, size)
@@ -55,7 +55,7 @@ function malloc_and_init(::Type{Table{K, V}},
     used = Blobs.init(blob, args...)
     @assert used - blob == size
 
-    blob
+    blob, page
 end
 
 function get_table(id::Int64, 

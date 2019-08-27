@@ -24,14 +24,22 @@ function Base.get(b::Buffer{K, V}, key) where {K, V}
     nothing
 end
 
-function to_blob(b::Buffer{K, V}) where {K, V} 
+function to_blob(::Type{PAGE}, b::Buffer{K, V}) where {K, V, PAGE} 
     c = collect(b.entries)
     sort!(c)
-    bv = Blobs.malloc_and_init(BlobVector{Entry{K, V}}, b.size)
+    
+    T = BlobVector{Entry{K, V}}
+    size = Blobs.self_size(T) + Blobs.child_size(T, b.size)
+    page = malloc_page(PAGE, size)
+    blob = Blob{T}(pointer(page), 0, size)
+    used = Blobs.init(blob, b.size)
+    @assert used - blob == size
+
     for i in 1:b.size
-        bv[i].key[] = c[i][1]
-        bv[i].val[] = c[i][2].val
-        bv[i].deleted[] = c[i][2].deleted
+        blob[i].key[] = c[i][1]
+        blob[i].val[] = c[i][2].val
+        blob[i].deleted[] = c[i][2].deleted
     end
-    return bv
+
+    blob, page
 end

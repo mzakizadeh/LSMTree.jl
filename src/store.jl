@@ -64,14 +64,15 @@ function Base.length(store::AbstractStore{K, V}) where {K, V}
     len
 end
 
-function buffer_dump(store::AbstractStore{K, V}) where {K, V}
+function buffer_dump(store::AbstractStore{K, V, PAGE, <:Any}) where {K, V, PAGE}
     store.buffer.size <= 0 && return
     compact(store)
 
     first_level = get_level(store.data.first_level[], store)
-    entries = to_blob(store.buffer)
+    entries, page = to_blob(PAGE, store.buffer)
     indices = partition(first_level.bounds[], entries[])
     current = merge(store, first_level, entries[], indices, true)
+    free_page(page)
     store.data.first_level[] = current.id[]
     set_level(current, store)
     
