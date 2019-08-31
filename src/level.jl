@@ -15,11 +15,8 @@ isfirst(l::Level) = l.prev_level <= 0
 
 function generate_id(::Type{Level}, 
                      s::AbstractStore{<:Any, <:Any, PAGE, <:Any}) where PAGE
-    meta, page = load_meta(s)
-    id = meta.next_level_id[]
-    meta.next_level_id[] += 1
-    save_meta(meta, page, s)
-    free_page(page)
+    id = s.meta.next_level_id
+    s.meta.next_level_id += 1
     return id
 end
 

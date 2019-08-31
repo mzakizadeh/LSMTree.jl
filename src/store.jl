@@ -3,6 +3,7 @@ mutable struct Store{K, V, PAGE, PAGE_HANDLE} <: AbstractStore{K, V, PAGE, PAGE_
     data::Blob{StoreData{K, V}}
     data_page::PAGE
     inmemory::InMemoryData
+    meta::MetaData{K}
     path::String
     function Store{K, V, PAGE, PAGE_HANDLE}(
         ;path::String="./db",
@@ -21,7 +22,8 @@ mutable struct Store{K, V, PAGE, PAGE_HANDLE} <: AbstractStore{K, V, PAGE, PAGE_
                                      buffer_max_size, 
                                      table_threshold_size)
         inmemory = InMemoryData(path)
-        new{K, V, PAGE, PAGE_HANDLE}(buffer, data, page, inmemory, path)
+        meta = MetaData{K}()
+        new{K, V, PAGE, PAGE_HANDLE}(buffer, data, page, inmemory, meta, path)
     end
     function Store{K, V, PAGE, PAGE_HANDLE}(
         path::String, 
@@ -30,7 +32,8 @@ mutable struct Store{K, V, PAGE, PAGE_HANDLE} <: AbstractStore{K, V, PAGE, PAGE_
     ) where {K, V, PAGE, PAGE_HANDLE}
         buffer = Buffer{K, V}(data.buffer_max_size[])
         inmemory = InMemoryData(path)
-        new{K, V, PAGE, PAGE_HANDLE}(buffer, data, data_page, inmemory, path)
+        meta = load_meta(K, PAGE, PAGE_HANDLE, path)
+        new{K, V, PAGE, PAGE_HANDLE}(buffer, data, data_page, inmemory, meta, path)
     end
 end
 

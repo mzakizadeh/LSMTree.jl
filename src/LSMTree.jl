@@ -53,6 +53,7 @@ end
 
 function Base.close(s::AbstractStore{K, V}) where {K, V}
     buffer_dump(s)
+    save_meta(s)
     # The id of first level is always unique
     # Therefore we also used it as store id
     path = "$(s.path)/$(s.data.first_level[]).str"

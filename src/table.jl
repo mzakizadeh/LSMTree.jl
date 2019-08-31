@@ -10,11 +10,8 @@ Base.max(t::Table) = t.entries[t.size].key[]
 
 function generate_id(::Type{Table}, 
                      s::AbstractStore{<:Any, <:Any, PAGE, <:Any}) where PAGE
-    meta, page = load_meta(s)
-    id = meta.next_table_id[]
-    meta.next_table_id[] += 1
-    save_meta(meta, page, s)
-    free_page(page)
+    id = s.meta.next_table_id
+    s.meta.next_table_id += 1
     return id
 end
 
