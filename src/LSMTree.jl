@@ -25,11 +25,13 @@ function Base.get(s::AbstractStore{K, V}, key) where {K, V}
     end
     l = get_level(s.data.first_level[], s)
     while l !== nothing
+        if s.meta.levels_min[l.id[]] <= key <= s.meta.levels_max[l.id[]]
             result = get(l[], key, s)
             if result !== nothing
                 result.deleted && return nothing
                 return result.val
             end
+        end
         l = get_level(l.next_level[], s)
     end
     nothing

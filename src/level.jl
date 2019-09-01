@@ -94,11 +94,20 @@ function copy(l::Blob{Level{K, V}},
               store::AbstractStore{K, V, <:Any, <:Any}) where {K, V}
     tables = Vector{Int64}()
     bounds = Vector{K}()
+    id = generate_id(Level, store)
+
+    if haskey(store.meta.levels_min, l.id[])
+        @assert haskey(store.meta.levels_max, l.id[])
+        store.meta.levels_min[id] = store.meta.levels_min[l.id[]]
+        store.meta.levels_max[id] = store.meta.levels_max[l.id[]]
+    end
+
     for t in l.tables[] push!(tables, t) end
     for b in l.bounds[] push!(bounds, b) end
+    
     res = malloc_and_init(Level{K, V},
                           store,
-                          generate_id(Level, store),
+                          id,
                           tables,
                           bounds,
                           l.size[],
@@ -175,7 +184,22 @@ function Base.merge(store::AbstractStore,
                     entries::BlobVector{Entry{K, V}},
                     indices::Vector{Int64}, 
                     force_remove) where {K, V}
-    result_tables, result_bounds = Vector{Int64}(), Vector{K}()
+    result_tables = Vector{Int64}() 
+    result_bounds = Vector{K}()
+    level_id = generate_id(Level, store)
+
+    if haskey(store.meta.levels_min, level.id[])
+        @assert haskey(store.meta.levels_max, level.id[])
+        store.meta.levels_min[level_id] = min(store.meta.levels_min[level.id[]], 
+                                              first(entries).key)
+        store.meta.levels_max[level_id] = max(store.meta.levels_max[level.id[]], 
+                                              last(entries).key)
+    else
+        @assert !haskey(store.meta.levels_max, level.id[])
+        store.meta.levels_min[level_id] = first(entries).key
+        store.meta.levels_max[level_id] = last(entries).key
+    end
+
     if length(indices) < 3 # If the level has at most one table
         if length(level.tables[]) > 0
             table, page = merge(store, 
@@ -246,7 +270,7 @@ function Base.merge(store::AbstractStore,
     pop!(result_bounds)
     res = malloc_and_init(Level{K, V}, 
                           store,
-                          generate_id(Level, store),
+                          level_id,
                           result_tables, 
                           result_bounds,
                           level.size[] + length(entries),
