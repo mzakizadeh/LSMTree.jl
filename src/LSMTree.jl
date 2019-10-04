@@ -7,8 +7,8 @@ include("interface.jl")
 include("utils.jl")
 include("entry.jl")
 include("inmemory_data.jl")
-include("meta_data.jl")
 include("bloom_filter.jl")
+include("meta_data.jl")
 include("table.jl")
 include("buffer.jl")
 include("level.jl")
@@ -26,10 +26,12 @@ function Base.get(s::AbstractStore{K, V}, key) where {K, V}
     l = get_level(s.data.first_level[], s)
     while l !== nothing
         if s.meta.levels_min[l.id[]] <= key <= s.meta.levels_max[l.id[]]
-            result = get(l[], key, s)
-            if result !== nothing
-                result.deleted && return nothing
-                return result.val
+            if in(key, s.meta.levels_bf[l.id[]])
+                result = get(l[], key, s)
+                if result !== nothing
+                    result.deleted && return nothing
+                    return result.val
+                end
             end
         end
         l = get_level(l.next_level[], s)

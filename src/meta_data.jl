@@ -48,6 +48,7 @@ mutable struct MetaData{K} <: AbstractMetaData{K}
     next_level_id::Int64
     levels_min::Dict{Int64, K}
     levels_max::Dict{Int64, K}
+    levels_bf::Dict{Int64, BloomFilter}
     function MetaData{K}(meta::BlobMetaData{K}) where K
         levels_min = Dict{Int64, K}()
         levels_max = Dict{Int64, K}()
@@ -58,7 +59,10 @@ mutable struct MetaData{K} <: AbstractMetaData{K}
                       levels_min, 
                       levels_max)
     end
-    MetaData{K}() where K = new{K}(1, 1, Dict{Int64, K}(), Dict{Int64, K}())
+    MetaData{K}() where K = new{K}(1, 1, 
+                                   Dict{Int64, K}(), 
+                                   Dict{Int64, K}(),
+                                   Dict{Int64, BloomFilter}())
 end
 
 function save_meta(s::AbstractStore{K, <:Any, PAGE, PAGE_HANDLE}) where {K, PAGE, PAGE_HANDLE}

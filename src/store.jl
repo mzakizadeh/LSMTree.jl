@@ -161,28 +161,34 @@ function compact(store::AbstractStore{K, V}) where {K, V}
     end
     # Create and return new level if tree has no level
     if current === nothing
+        new_id = generate_id(Level, store)
+        new_size = store.data[].buffer_max_size * store.data[].fanout
         new_level = malloc_and_init(Level{K, V}, 
                                     store,
-                                    generate_id(Level, store),
+                                    new_id,
                                     Vector{Int64}(),
                                     Vector{V}(), 
                                     0, 
-                                    store.buffer.max_size * store.data.fanout[], 
+                                    new_size, 
                                     store.data.table_threshold_size[])
+        store.meta.levels_bf[new_id] = BloomFilter(new_size, 0.001)
         set_level(new_level, store)
-        store.data.first_level[] = new_level.id[]
+        store.data.first_level[] = new_id
         return
     end
     # Create new level if we didn't find enough space in tree
     if next === nothing || isfull(next[])
         last_level = next === nothing ? copy(current, store) : copy(next, store)
+        new_id = generate_id(Level, store)
+        new_size = last_level.size[] * store.data.fanout[]
         new_level = malloc_and_init(Level{K, V},
                                     store,
-                                    generate_id(Level, store),
+                                    new_id,
                                     Vector{Int64}(),
                                     Vector{V}(), 0,
-                                    last_level.size[] * store.data.fanout[], 
+                                    new_size, 
                                     store.data.table_threshold_size[])
+        store.meta.levels_bf[new_id] = BloomFilter(new_size, 0.001)
         new_level.prev_level[] = last_level.id[]
         last_level.next_level[] = new_level.id[]
         set_level(last_level, store)

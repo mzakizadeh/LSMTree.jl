@@ -78,9 +78,14 @@ end
 
 function empty(l::Blob{Level{K, V}}, 
                store::AbstractStore{K, V, <:Any, <:Any}) where {K, V}
+    id = generate_id(Level, store)
+
+    bf = empty(store.meta.levels_bf[l.id[]])
+    store.meta.levels_bf[id] = BloomFilter(bf.capacity, bf.error_rate)
+
     res = malloc_and_init(Level{K, V},
                           store,
-                          generate_id(Level, store),
+                          id,
                           Vector{Int64}(), 
                           Vector{K}(), 
                           0, l.max_size[], 
@@ -94,12 +99,17 @@ function copy(l::Blob{Level{K, V}},
               store::AbstractStore{K, V, <:Any, <:Any}) where {K, V}
     tables = Vector{Int64}()
     bounds = Vector{K}()
-    id = generate_id(Level, store)
 
-    if haskey(store.meta.levels_min, l.id[])
-        @assert haskey(store.meta.levels_max, l.id[])
-        store.meta.levels_min[id] = store.meta.levels_min[l.id[]]
-        store.meta.levels_max[id] = store.meta.levels_max[l.id[]]
+    old_id = l.id[]
+    new_id = generate_id(Level, store)
+
+    bf = deepcopy(store.meta.levels_bf[old_id])
+    store.meta.levels_bf[new_id] = bf
+
+    if haskey(store.meta.levels_min, old_id)
+        @assert haskey(store.meta.levels_max, old_id)
+        store.meta.levels_min[new_id] = store.meta.levels_min[old_id]
+        store.meta.levels_max[new_id] = store.meta.levels_max[old_id]
     end
 
     for t in l.tables[] push!(tables, t) end
@@ -107,7 +117,7 @@ function copy(l::Blob{Level{K, V}},
     
     res = malloc_and_init(Level{K, V},
                           store,
-                          id,
+                          new_id,
                           tables,
                           bounds,
                           l.size[],
@@ -186,7 +196,13 @@ function Base.merge(store::AbstractStore,
                     force_remove) where {K, V}
     result_tables = Vector{Int64}() 
     result_bounds = Vector{K}()
+
+    old_id = level.id[]
     level_id = generate_id(Level, store)
+
+    bf = deepcopy(store.meta.levels_bf[old_id])
+    for e in entries add!(bf, e.key) end
+    store.meta.levels_bf[level_id] = bf
 
     if haskey(store.meta.levels_min, level.id[])
         @assert haskey(store.meta.levels_max, level.id[])
