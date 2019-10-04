@@ -70,7 +70,8 @@ function get_table(id::Int64,
     end
     # Else load the level to the memory 
     path = "$(s.path)/$id.tbl"
-    if isfile_pagehandle(PAGE_HANDLE, path)
+    # File exsitence check disabled temprory beacause of performance issues 
+    # if isfile_pagehandle(PAGE_HANDLE, path)
         f = open_pagehandle(PAGE_HANDLE, path)
         size = size_pagehandle(f)
         page = malloc_page(PAGE, size)
@@ -88,8 +89,8 @@ function get_table(id::Int64,
             free_page(deleted_id_page)
         end
         return s.inmemory.tables[id]
-    end
-    error("Table does not exist! (path=$path)")
+    # end
+    # error("Table does not exist! (path=$path)")
 end
 
 function set_table(t::Blob{Table{K, V}}, 
@@ -111,24 +112,24 @@ function Base.get(t::Table{K, V}, key::K) where {K, V}
 end
 
 function Base.merge(store::AbstractStore{K, V, <:Any, <:Any},
-                    table::Blob{Table{K, V}},
+                    table::Table{K, V},
                     entries::BlobVector{Entry{K, V}},
                     start_index::Int64,
                     end_index::Int64,
                     force_remove) where {K, V}
     result_entries = Vector{Entry{K, V}}()
     i, j, size = 1, start_index + 1, 0
-    while i <= length(table[]) && j <= end_index
-        if isequal(table.entries[i][], entries[j])
+    while i <= length(table) && j <= end_index
+        if isequal(table.entries[i], entries[j])
             if !force_remove || !entries[j].deleted
                 push!(result_entries, entries[j])
                 size += 1
             end
             i += 1
             j += 1
-        elseif table.entries[i][] < entries[j]
-            if !force_remove || !table.entries[i][].deleted 
-                push!(result_entries, table.entries[i][])
+        elseif table.entries[i] < entries[j]
+            if !force_remove || !table.entries[i].deleted 
+                push!(result_entries, table.entries[i])
                 size += 1
             end
             i += 1
@@ -140,9 +141,9 @@ function Base.merge(store::AbstractStore{K, V, <:Any, <:Any},
             j += 1
         end
     end
-    while i <= length(table[])
-        if !force_remove || !table.entries[i][].deleted 
-            push!(result_entries, table.entries[i][])
+    while i <= length(table)
+        if !force_remove || !table.entries[i].deleted 
+            push!(result_entries, table.entries[i])
             size += 1
         end
         i += 1
@@ -160,15 +161,15 @@ function Base.merge(store::AbstractStore{K, V, <:Any, <:Any},
                            result_entries)
 end
 
-function split(t::Blob{Table{K, V}}, s::AbstractStore{K, V, <:Any, <:Any}) where {K, V} 
-    mid = floor(Int, t.size[] / 2)
+function split(t::Table{K, V}, s::AbstractStore{K, V, <:Any, <:Any}) where {K, V} 
+    mid = floor(Int, t.size / 2)
     t1_entries = Vector{Entry{K, V}}()
     t2_entries = Vector{Entry{K, V}}()
     for i in 1:mid 
-        push!(t1_entries, t.entries[i][]) 
+        push!(t1_entries, t.entries[i]) 
     end
-    for i in mid + 1:t.size[]
-        push!(t2_entries, t.entries[i][]) 
+    for i in mid + 1:t.size
+        push!(t2_entries, t.entries[i]) 
     end
     t1 = malloc_and_init(Table{K, V}, s, generate_id(Table, s), t1_entries)
     t2 = malloc_and_init(Table{K, V}, s, generate_id(Table, s), t2_entries)
