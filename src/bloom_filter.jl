@@ -1,5 +1,9 @@
 # https://github.com/johnmyleswhite/BloomFilters.jl
 
+# Probability table for computing m_over_n
+# when specifying k and the error rate, but not
+# the number of required bits per element
+# Table from: http://pages.cs.wisc.edu/~cao/papers/summary-cache/node8.html
 k_errors = Vector{Vector{Float64}}(undef, 12)
 
 k_errors[1] = [1.0,
@@ -116,50 +120,82 @@ function get_k_error(error_rate::Float64, k_hashes::Int)
     return m_over_n, k_errors[k_hashes][m_over_n]
 end
 
-struct BloomFilter
+abstract type AbstractBloomFilter end
+
+struct BlobBloomFilter <: AbstractBloomFilter
     array::BlobBitVector
-    k::Int64
-    capacity::Int64
+    k::Int
+    capacity::Int
     error_rate::Float64
-    n_bits::Int64
+    n_bits::Int
 end
 
-function Blobs.child_size(::Type{BloomFilter}, 
-                          capacity::Int64, 
-                          error_rate::Float64, 
-                          k_hashes::Int64)
-    T = BloomFilter
-    bits_per_elem, error_rate = get_k_error(error_rate, k_hashes)
-    n_bits = capacity * bits_per_elem
-    +(Blobs.child_size(fieldtype(T, :array), n_bits))
-  end
+function Blobs.child_size(::Type{BlobBloomFilter}, bf::AbstractBloomFilter)
+    T = BlobBloomFilter
+    len = length(bf.array)
+    +(Blobs.child_size(fieldtype(T, :array), len))
+end
 
-function Blobs.init(blob::Blob{BloomFilter}, 
+function Blobs.init(blob::Blob{BlobBloomFilter}, 
                     free::Blob{Nothing}, 
-                    capacity::Int64, 
-                    error_rate::Float64, 
-                    k_hashes::Int64)
-    bits_per_elem, error_rate = get_k_error(error_rate, k_hashes)
-    n_bits = capacity * bits_per_elem
-    free = Blobs.init(blob.array, free, n_bits)
-    fill!(blob.array[], false)
-    blob.k[] = k_hashes
-    blob.capacity[] = capacity
-    blob.error_rate[] = error_rate
-    blob.n_bits[] = n_bits
+                    bf::AbstractBloomFilter)
+    len = length(bf.array)
+    free = Blobs.init(blob.array, free, len)
+    for i in 1:len
+        blob.array[i][] = bf.array[i]
+    end
+    blob.k[] = bf.k
+    blob.capacity[] = bf.capacity
+    blob.error_rate[] = bf.error_rate
+    blob.n_bits[] = bf.n_bits
     free
 end
 
-function Blobs.malloc_and_init(::Type{BloomFilter}, args...)::Blob{BloomFilter}
-    size = Blobs.self_size(BloomFilter) + child_size(BloomFilter, args...)
-    page = malloc_page(MemoryPage, size)
-    blob = Blob{BloomFilter}(page.ptr, 0, size)
-    used = init(blob, args...)
+function malloc_and_init(::Type{BlobBloomFilter}, 
+                         s::AbstractStore{<:Any, <:Any, PAGE, <:Any},
+                         args...) where PAGE
+    T = BlobBloomFilter
+    size = Blobs.self_size(T) + Blobs.child_size(T, args...)
+    page = malloc_page(PAGE, size)
+    
+    blob = Blob{T}(pointer(page), 0, size)
+    used = Blobs.init(blob, args...)
     @assert used - blob == size
-    blob
+    
+    blob, page
 end
 
-function hash_n(key::Any, k::Int, max::Int)
+mutable struct BloomFilter <: AbstractBloomFilter
+    array::BitArray
+    k::Int
+    capacity::Int
+    error_rate::Float64
+    n_bits::Int
+end
+
+
+BloomFilter(bf::AbstractBloomFilter) = BloomFilter(
+    bf.array,
+    bf.k,
+    bf.capacity,
+    bf.error_rate,
+    bf.n_bits
+)
+
+empty(bf::BloomFilter) = BloomFilter(
+    falses(1, bf.n_bits),
+    bf.k,
+    bf.capacity,
+    bf.error_rate,
+    bf.n_bits
+)
+
+### Hash functions (uses 2 hash method)
+# Uses MurmurHash on 64-bit systems so sufficient randomness/speed
+# Get the nth hash of a string using the formula hash_a + n * hash_b
+# which uses 2 hash functions vs. k and has comparable properties
+# See Kirsch and Mitzenmacher, 2008: http://www.eecs.harvard.edu/~kirsch/pubs/bbbf/rsa.pdf
+function hash_n(key::T, k::Int, max::Int) where {T}
     a_hash = hash(key, UInt(0))
     b_hash = hash(key, UInt(170))
     hashes = Array{UInt, 1}(undef, k)
@@ -169,36 +205,73 @@ function hash_n(key::Any, k::Int, max::Int)
     return hashes
 end
 
-function add!(bf::BloomFilter, key::Any)
+### Bloom filter constructors
+# Constructor group #1: (optional IOStream / string to mmap-array), capacity, bits per element, k
+# Note that this inserts NaN for the error rate, as this module does not include functionality
+# for calculating error rates for any arbitrary bits per element and k (only a subset, see #2 below)
+# USE CASES: Advanced use only. Not recommended as default constructor choice.
+function BloomFilter(capacity::Int, bits_per_elem::Int, k_hashes::Int)
+    n_bits = capacity * bits_per_elem
+    BloomFilter(falses((1, n_bits)), k_hashes, capacity, NaN, n_bits)
+end
+
+# Constructor group #2: (optional IOStream / string to mmap-array), capacity, error rate, k hashes
+# Looks up the optimal number of bits per element given an error rate and specified k in a pre-calculated
+# probability table. Note that k must be <= 12 or an error will be thrown. Similarly, this method
+# does not support Bloom filter construction where more than 4 bytes are required per element
+# (though that can manually be accomplished with one of the above constrcutors).
+# USE CASES: Recommended for most applications, but carries modest space-tradeoff for slightly faster operation with fewer hashes
+function BloomFilter(capacity::Int, error_rate::Float64, k_hashes::Int)
+    bits_per_elem, error_rate = get_k_error(error_rate, k_hashes)
+    n_bits = capacity * bits_per_elem
+    BloomFilter(falses((n_bits, 1)), k_hashes, capacity, error_rate, n_bits)
+end
+
+# Constructor group #3: (optional IOStream / string to mmap-array), capacity, error rate
+# Computes an optimal k for a given error rate, where k is selected to minimize the overall
+# space required for the Bloom filter. In practice, k may be larger than desired and require
+# additional memory accesses.
+# USE CASES: Recommended when extreme space efficiency is required, and modestly slower insertions
+# and lookups are tolerable.
+function BloomFilter(capacity::Int, error_rate::Float64)
+    bits_per_elem = round(Int, ceil(-1.0 * (log(error_rate) / (log(2) ^ 2))))
+    k_hashes = round(Int, log(2) * bits_per_elem)  # Note: ceil() would be strictly more conservative
+    n_bits = capacity * bits_per_elem
+    BloomFilter(falses((1, n_bits)), k_hashes, capacity, error_rate, n_bits)
+end
+
+### Bloom filter functions: insert!, add! (alias to insert), contains, and show
+function add!(bf::BloomFilter, key::T) where {T}
     hashes = hash_n(key, bf.k, bf.n_bits)
     for h in hashes
-        bf.array[h] = true
+        bf.array[h] = 1
     end
 end
 
-function contains(bf::BloomFilter, key::Any)
+function Base.in(key::T, bf::BloomFilter) where {T}
     hashes = hash_n(key, bf.k, bf.n_bits)
     for h in hashes
-        if !bf.array[h][]
+        if bf.array[h] != 1
             return false
         end
     end
     return true
 end
 
-Base.in(key::Any, bf::BloomFilter) = contains(bf, key)
+@deprecate contains(bf::BloomFilter, key::T) where {T} Base.in(key, bf)
 
-function add!(bf::BloomFilter, keys::Vector{Any})
+# Vector variants
+function add!(bf::BloomFilter, keys::Vector{T}) where {T}
     for key in keys
         add!(bf, key)
     end
 end
 
-function contains(bf::BloomFilter, keys::Vector{Any})
+function Base.in(keys::Vector{T}, bf::BloomFilter) where {T}
     m = length(keys)
     res = falses(m)
     for i in 1:m
-        res[i] = contains(bf, keys[i])
+        res[i] = in(keys[i], bf)
     end
     return res
 end

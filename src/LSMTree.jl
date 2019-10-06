@@ -7,8 +7,8 @@ include("interface.jl")
 include("utils.jl")
 include("entry.jl")
 include("inmemory_data.jl")
-include("meta_data.jl")
 include("bloom_filter.jl")
+include("meta_data.jl")
 include("table.jl")
 include("buffer.jl")
 include("level.jl")
@@ -25,11 +25,15 @@ function Base.get(s::AbstractStore{K, V}, key) where {K, V}
     end
     l = get_level(s.data.first_level[], s)
     while l !== nothing
-            result = get(l[], key, s)
-            if result !== nothing
-                result.deleted && return nothing
-                return result.val
+        if s.meta.levels_min[l.id[]] <= key <= s.meta.levels_max[l.id[]]
+            if in(key, s.meta.levels_bf[l.id[]])
+                result = get(l[], key, s)
+                if result !== nothing
+                    result.deleted && return nothing
+                    return result.val
+                end
             end
+        end
         l = get_level(l.next_level[], s)
     end
     nothing
@@ -53,6 +57,7 @@ end
 
 function Base.close(s::AbstractStore{K, V}) where {K, V}
     buffer_dump(s)
+    save_meta(s)
     # The id of first level is always unique
     # Therefore we also used it as store id
     path = "$(s.path)/$(s.data.first_level[]).str"
@@ -77,25 +82,6 @@ function restore(::Type{K},
         f = open_pagehandle(PAGE_HANDLE, file)
         size = size_pagehandle(f)
         page = malloc_page(PAGE, size)
-        blob = Blob{Level{K, V}}(pointer(page), 0, size)
-        read_pagehandle(PAGE_HANDLE, page, size)
-        s = Store{K, V}(path, blob, page)
-        push!(s.inmemory.store_ids_inuse, id)
-        close_pagehandle(f)
-        return s
-    end
-    nothing
-end
-
-function restore(::Type{K}, 
-                 ::Type{V}, 
-                 path::String, 
-                 id::Int64) where {K, V}
-    file = "$path/$id.str"
-    if isfile_pagehandle(FilePageHandle, file)
-        f = open_pagehandle(FilePageHandle, file)
-        size = size_pagehandle(f)
-        page = malloc_page(MemoryPage, size)
         blob = Blob{StoreData{K, V}}(pointer(page), 0, size)
         read_pagehandle(f, page, size)
         s = Store{K, V}(path, blob, page)
@@ -105,6 +91,11 @@ function restore(::Type{K},
     end
     nothing
 end
+
+restore(::Type{K}, 
+        ::Type{V}, 
+        path::String, 
+        id::Int64) where {K, V} = restore(K, V, MemoryPage, FilePageHandle, path, id)
 
 export get, 
        put!,

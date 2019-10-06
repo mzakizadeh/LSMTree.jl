@@ -3,6 +3,7 @@ mutable struct Store{K, V, PAGE, PAGE_HANDLE} <: AbstractStore{K, V, PAGE, PAGE_
     data::Blob{StoreData{K, V}}
     data_page::PAGE
     inmemory::InMemoryData
+    meta::MetaData{K}
     path::String
     function Store{K, V, PAGE, PAGE_HANDLE}(
         ;path::String="./db",
@@ -21,7 +22,8 @@ mutable struct Store{K, V, PAGE, PAGE_HANDLE} <: AbstractStore{K, V, PAGE, PAGE_
                                      buffer_max_size, 
                                      table_threshold_size)
         inmemory = InMemoryData(path)
-        new{K, V, PAGE, PAGE_HANDLE}(buffer, data, page, inmemory, path)
+        meta = MetaData{K}()
+        new{K, V, PAGE, PAGE_HANDLE}(buffer, data, page, inmemory, meta, path)
     end
     function Store{K, V, PAGE, PAGE_HANDLE}(
         path::String, 
@@ -30,7 +32,8 @@ mutable struct Store{K, V, PAGE, PAGE_HANDLE} <: AbstractStore{K, V, PAGE, PAGE_
     ) where {K, V, PAGE, PAGE_HANDLE}
         buffer = Buffer{K, V}(data.buffer_max_size[])
         inmemory = InMemoryData(path)
-        new{K, V, PAGE, PAGE_HANDLE}(buffer, data, data_page, inmemory, path)
+        meta = load_meta(K, PAGE, PAGE_HANDLE, path)
+        new{K, V, PAGE, PAGE_HANDLE}(buffer, data, data_page, inmemory, meta, path)
     end
 end
 
@@ -68,9 +71,9 @@ function buffer_dump(store::AbstractStore{K, V, PAGE, <:Any}) where {K, V, PAGE}
     store.buffer.size <= 0 && return
     compact(store)
 
-    first_level = get_level(store.data.first_level[], store)
+    first_level = get_level(store.data.first_level[], store)[]
     entries, page = to_blob(PAGE, store.buffer)
-    indices = partition(first_level.bounds[], entries[])
+    indices = partition(first_level.bounds, entries[])
     current = merge(store, first_level, entries[], indices, true)
     free_page(page)
     store.data.first_level[] = current.id[]
@@ -78,7 +81,7 @@ function buffer_dump(store::AbstractStore{K, V, PAGE, <:Any}) where {K, V, PAGE}
     
     next = get_level(current.next_level[], store)
     while next !== nothing 
-        next = copy(next, store)
+        next = copy(next[], store)
         next.prev_level[] = current.id[] 
         current.next_level[] = next.id[]
         set_level(next, store)
@@ -138,77 +141,108 @@ function gc(store::AbstractStore{K, V, PAGE, PAGE_HANDLE}) where {K, V, PAGE, PA
         delete!(store.inmemory.level_pages, deleted_id)
         free_page(deleted_id_page)
         delete_pagehandle(PAGE_HANDLE, "$(store.path)/$deleted_id.lvl", force=true)
+        # remove related meta data
+        delete!(store.meta.levels_bf, deleted_id)
+        delete!(store.meta.levels_max, deleted_id)
+        delete!(store.meta.levels_min, deleted_id)
+        delete_pagehandle(PAGE_HANDLE, "$(store.path)/$deleted_id.bf", force=true)
     end
 end
 
 function compact(store::AbstractStore{K, V}) where {K, V}
+    data = store.data[]
+    first_level = nothing
     # Return if first level has enough empty space
-    !isempty(store.data[]) && !isfull(get_level(store.data.first_level[], store)[]) && return
+    if !isempty(data) 
+        first_level = get_level(data.first_level, store)
+        !isfull(first_level[]) && return
+    end
     # Find first level that has enough empty space
-    current = get_level(store.data.first_level[], store)
-    next = current !== nothing ? get_level(current.next_level[], store) : nothing
+    blob_current = first_level
+    current = blob_current !== nothing ? blob_current[] : nothing
+    blob_next = blob_current !== nothing ? get_level(current.next_level, store) : nothing
+    next = blob_next !== nothing ? blob_next[] : nothing
+
     force_remove = false
-    while next !== nothing && !islast(next[])
-        if !isfull(next[])
-            force_remove = islast(next[])
+
+    while blob_next !== nothing && !islast(next)
+        if !isfull(next)
+            force_remove = islast(next)
             break
         end
-        current = get_level(current.next_level[], store) 
-        next = get_level(next.next_level[], store)
+        current = get_level(blob_current.next_level[], store) 
+        blob_next = get_level(blob_next.next_level[], store)
+        next = blob_next !== nothing ? blob_next[] : nothing
     end
     # Create and return new level if tree has no level
-    if current === nothing
+    if blob_current === nothing
+        new_id = generate_id(Level, store)
+        new_size = data.buffer_max_size * data.fanout
         new_level = malloc_and_init(Level{K, V}, 
                                     store,
-                                    generate_id(Level, store),
+                                    new_id,
                                     Vector{Int64}(),
                                     Vector{V}(), 
                                     0, 
-                                    store.buffer.max_size * store.data.fanout[], 
+                                    new_size, 
                                     store.data.table_threshold_size[])
+        store.meta.levels_bf[new_id] = BloomFilter(new_size, 0.001)
         set_level(new_level, store)
-        store.data.first_level[] = new_level.id[]
+        store.data.first_level[] = new_id
         return
     end
     # Create new level if we didn't find enough space in tree
-    if next === nothing || isfull(next[])
-        last_level = next === nothing ? copy(current, store) : copy(next, store)
+    if blob_next === nothing || isfull(next)
+        blob_last_level = blob_next === nothing ? copy(current, store) : copy(next, store)
+        last_level = blob_last_level[]
+
+        new_id = generate_id(Level, store)
+        new_size = blob_last_level.size[] * store.data.fanout[]
         new_level = malloc_and_init(Level{K, V},
                                     store,
-                                    generate_id(Level, store),
+                                    new_id,
                                     Vector{Int64}(),
                                     Vector{V}(), 0,
-                                    last_level.size[] * store.data.fanout[], 
+                                    new_size, 
                                     store.data.table_threshold_size[])
-        new_level.prev_level[] = last_level.id[]
-        last_level.next_level[] = new_level.id[]
-        set_level(last_level, store)
+        store.meta.levels_bf[new_id] = BloomFilter(new_size, 0.001)
+        new_level.prev_level[] = blob_last_level.id[]
+        blob_last_level.next_level[] = new_level.id[]
+        set_level(blob_last_level, store)
         set_level(new_level, store)
-        current, next = last_level, new_level
+        blob_current, blob_next = blob_last_level, new_level
+        next = blob_next[]
         force_remove = true
     end
     # Compact levels and free up space in first level
-    after_next = get_level(next.next_level[], store)
-    while !isfirst(next[]) 
-        for table in current.tables[]
-            next = compact(store, next, get_table(table, store), force_remove)
-            set_level(next, store)
+    blob_after_next = get_level(next.next_level[], store)
+    after_next = blob_after_next !== nothing ? blob_after_next[] : nothing 
+    while !isfirst(next) 
+        for table in current.tables
+            blob_next = compact(store, next, get_table(table, store)[], force_remove)
+            next = blob_next[]
+            set_level(blob_next, store)
         end
-        if after_next !== nothing 
-            next.next_level[] = after_next.id[]
-            after_next.prev_level[] = next.id[]
-            set_level(after_next, store)
+        if blob_after_next !== nothing 
+            blob_next.next_level[] = after_next.id
+            next = blob_next[]
+            blob_after_next.prev_level[] = next.id
+            set_level(blob_after_next, store)
         end
-        current_isfirst = isfirst(current[])
-        current = empty(current, store)
-        current.next_level[] = next.id[]
-        next.prev_level[] = current.id[]
-        if current_isfirst store.data.first_level[] = current.id[] end
-        set_level(next, store)
-        set_level(current, store)
+        current_isfirst = isfirst(current)
+        blob_current = empty(current, store)
+        blob_current.next_level[] = next.id
+        current = blob_current[]
+        blob_next.prev_level[] = current.id
+        if current_isfirst store.data.first_level[] = current.id end
+        set_level(blob_next, store)
+        set_level(blob_current, store)
+        blob_after_next = blob_next
         after_next = next
+        blob_next = blob_current
         next = current
-        current = get_level(current.prev_level[], store)
+        blob_current = get_level(current.prev_level[], store)
+        current = blob_current !== nothing ? blob_current[] : nothing 
         force_remove = false
     end
 end

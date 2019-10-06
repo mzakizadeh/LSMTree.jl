@@ -15,11 +15,8 @@ isfirst(l::Level) = l.prev_level <= 0
 
 function generate_id(::Type{Level}, 
                      s::AbstractStore{<:Any, <:Any, PAGE, <:Any}) where PAGE
-    meta, page = load_meta(s)
-    id = meta.next_level_id[]
-    meta.next_level_id[] += 1
-    save_meta(meta, page, s)
-    free_page(page)
+    id = s.meta.next_level_id
+    s.meta.next_level_id += 1
     return id
 end
 
@@ -79,36 +76,55 @@ function malloc_and_init(::Type{Level{K, V}},
     blob
 end
 
-function empty(l::Blob{Level{K, V}}, 
+function empty(l::Level{K, V}, 
                store::AbstractStore{K, V, <:Any, <:Any}) where {K, V}
+    new_id = generate_id(Level, store)
+
+    bf = empty(store.meta.levels_bf[l.id])
+    store.meta.levels_bf[new_id] = BloomFilter(bf.capacity, bf.error_rate)
+
     res = malloc_and_init(Level{K, V},
                           store,
-                          generate_id(Level, store),
+                          new_id,
                           Vector{Int64}(), 
                           Vector{K}(), 
-                          0, l.max_size[], 
-                          l.table_threshold_size[])
-    res.prev_level[] = l.prev_level[]
-    res.next_level[] = l.next_level[]
+                          0, l.max_size, 
+                          l.table_threshold_size)
+    res.prev_level[] = l.prev_level
+    res.next_level[] = l.next_level
     res
 end
 
-function copy(l::Blob{Level{K, V}}, 
+function copy(l::Level{K, V}, 
               store::AbstractStore{K, V, <:Any, <:Any}) where {K, V}
     tables = Vector{Int64}()
     bounds = Vector{K}()
-    for t in l.tables[] push!(tables, t) end
-    for b in l.bounds[] push!(bounds, b) end
+
+    old_id = l.id[]
+    new_id = generate_id(Level, store)
+
+    bf = deepcopy(store.meta.levels_bf[old_id])
+    store.meta.levels_bf[new_id] = bf
+
+    if haskey(store.meta.levels_min, old_id)
+        @assert haskey(store.meta.levels_max, old_id)
+        store.meta.levels_min[new_id] = store.meta.levels_min[old_id]
+        store.meta.levels_max[new_id] = store.meta.levels_max[old_id]
+    end
+
+    for t in l.tables push!(tables, t) end
+    for b in l.bounds push!(bounds, b) end
+    
     res = malloc_and_init(Level{K, V},
                           store,
-                          generate_id(Level, store),
+                          new_id,
                           tables,
                           bounds,
-                          l.size[],
-                          l.max_size[],
-                          l.table_threshold_size[])
-    res.prev_level[] = l.prev_level[]
-    res.next_level[] = l.next_level[]
+                          l.size,
+                          l.max_size,
+                          l.table_threshold_size)
+    res.prev_level[] = l.prev_level
+    res.next_level[] = l.next_level
     res
 end
 
@@ -129,7 +145,7 @@ function get_level(id::Int64,
         blob = Blob{Level{K, V}}(pointer(page), 0, size)
         read_pagehandle(f, page, size)
         s.inmemory.level_pages[id] = page
-        s.inmemory.levels[blob.id[]] = blob
+        s.inmemory.levels[id] = blob
         close_pagehandle(f)
         return s.inmemory.levels[id]
     end
@@ -155,7 +171,6 @@ end
 function Base.get(l::Level{K, V}, 
                   key::K, 
                   s::AbstractStore{K, V, <:Any, <:Any}) where {K, V} 
-    # TODO add min, max and bf
     for i in 1:length(l.tables)
         i == length(l.tables) && return get(get_table(l.tables[i], s)[], key)
         if key <= l.bounds[i]
@@ -166,23 +181,44 @@ function Base.get(l::Level{K, V},
 end
 
 function compact(s::AbstractStore,
-                 l::Blob{Level{K, V}},
-                 t::Blob{Table{K, V}},
+                 l::Level{K, V},
+                 t::Table{K, V},
                  force_remove) where {K, V}
-    indices = partition(l.bounds[], t.entries[])
-    return merge(s, l, t.entries[], indices, force_remove)
+    indices = partition(l.bounds, t.entries)
+    return merge(s, l, t.entries, indices, force_remove)
 end
 
 function Base.merge(store::AbstractStore,
-                    level::Blob{Level{K, V}},
+                    level::Level{K, V},
                     entries::BlobVector{Entry{K, V}},
                     indices::Vector{Int64}, 
                     force_remove) where {K, V}
-    result_tables, result_bounds = Vector{Int64}(), Vector{K}()
+    result_tables = Vector{Int64}() 
+    result_bounds = Vector{K}()
+
+    old_id = level.id
+    level_id = generate_id(Level, store)
+
+    bf = deepcopy(store.meta.levels_bf[old_id])
+    for e in entries add!(bf, e.key) end
+    store.meta.levels_bf[level_id] = bf
+
+    if haskey(store.meta.levels_min, old_id)
+        @assert haskey(store.meta.levels_max, old_id)
+        store.meta.levels_min[level_id] = min(store.meta.levels_min[old_id], 
+                                              first(entries).key)
+        store.meta.levels_max[level_id] = max(store.meta.levels_max[old_id], 
+                                              last(entries).key)
+    else
+        @assert !haskey(store.meta.levels_max, old_id)
+        store.meta.levels_min[level_id] = first(entries).key
+        store.meta.levels_max[level_id] = last(entries).key
+    end
+
     if length(indices) < 3 # If the level has at most one table
-        if length(level.tables[]) > 0
+        if length(level.tables) > 0
             table, page = merge(store, 
-                                get_table(level.tables[1][], store), 
+                                get_table(level.tables[1], store)[], 
                                 entries, 
                                 indices[1], 
                                 indices[2], 
@@ -197,8 +233,8 @@ function Base.merge(store::AbstractStore,
                                           generate_id(Table, store), 
                                           v)
         end
-        if table.size[] > level.table_threshold_size[]
-            (t1, p1), (t2, p2) = split(table, store)
+        if table.size[] > level.table_threshold_size
+            (t1, p1), (t2, p2) = split(table[], store)
             set_table(t1, store)
             push!(result_tables, t1.id[])
             push!(result_bounds, max(t1[]))
@@ -215,16 +251,16 @@ function Base.merge(store::AbstractStore,
             free_page(page)
         end
     else # If the level at least two tables
-        for i in 1:length(level.tables[])
+        for i in 1:length(level.tables)
             if indices[i + 1] - indices[i] > 0
                 table, page = merge(store, 
-                                    get_table(level.tables[i][], store), 
+                                    get_table(level.tables[i], store)[], 
                                     entries, 
                                     indices[i], 
                                     indices[i + 1], 
                                     false)
-                if table.size[] > level.table_threshold_size[]
-                    (t1, p1), (t2, p2) = split(table, store)
+                if table.size[] > level.table_threshold_size
+                    (t1, p1), (t2, p2) = split(table[], store)
                     set_table(t1, store)
                     push!(result_tables, t1.id[])
                     push!(result_bounds, max(t1[]))
@@ -249,13 +285,13 @@ function Base.merge(store::AbstractStore,
     pop!(result_bounds)
     res = malloc_and_init(Level{K, V}, 
                           store,
-                          generate_id(Level, store),
+                          level_id,
                           result_tables, 
                           result_bounds,
-                          level.size[] + length(entries),
-                          level.max_size[],
-                          level.table_threshold_size[])
-    res.prev_level[], res.next_level[] = level.prev_level[], level.next_level[]
+                          level.size + length(entries),
+                          level.max_size,
+                          level.table_threshold_size)
+    res.prev_level[], res.next_level[] = level.prev_level, level.next_level
     return res
 end
 
