@@ -3,15 +3,15 @@ abstract type AbstractMetaData{K} end
 struct BlobMetaData{K}
     next_table_id::Int64
     next_level_id::Int64
-    levels_min::Vector{Tuple{Int64, K}}
-    levels_max::Vector{Tuple{Int64, K}}
+    levels_min::BlobVector{Tuple{Int64, K}}
+    levels_max::BlobVector{Tuple{Int64, K}}
 end
 
 function Blobs.child_size(::Type{BlobMetaData{K}}, meta::AbstractMetaData{K}) where K
     T = BlobMetaData{K}
     len = length(meta.levels_min)
-    Blobs.child_size(fieldtype(T, :levels_min), len)
-    Blobs.child_size(fieldtype(T, :levels_max), len)
+    +(Blobs.child_size(fieldtype(T, :levels_min), len),
+      Blobs.child_size(fieldtype(T, :levels_max), len))
 end
 
 function Blobs.init(blob::Blob{BlobMetaData{K}}, 
@@ -35,9 +35,10 @@ end
 function malloc_and_init(::Type{BlobMetaData{K}}, 
                          s::AbstractStore{K, <:Any, PAGE, <:Any}, 
                          args...) where {K, PAGE}
-    size = Blobs.self_size(BlobMetaData{K}) + Blobs.child_size(BlobMetaData{K}, args...)
+    T = BlobMetaData{K}
+    size = Blobs.self_size(T) + Blobs.child_size(T, args...)
     page = malloc_page(PAGE, size)
-    blob = Blob{BlobMetaData{K}}(pointer(page), 0, size)
+    blob = Blob{T}(pointer(page), 0, size)
     used = Blobs.init(blob, args...)
     @assert used - blob == size
     blob, page
@@ -49,15 +50,39 @@ mutable struct MetaData{K} <: AbstractMetaData{K}
     levels_min::Dict{Int64, K}
     levels_max::Dict{Int64, K}
     levels_bf::Dict{Int64, BloomFilter}
-    function MetaData{K}(meta::BlobMetaData{K}) where K
+    function MetaData{K}(::Type{PAGE},
+                         ::Type{PAGE_HANDLE},
+                         meta::BlobMetaData{K},
+                         path::String) where {K, PAGE, PAGE_HANDLE}
+        levels_bf = Dict{Int64, BloomFilter}()
         levels_min = Dict{Int64, K}()
         levels_max = Dict{Int64, K}()
-        for (id, min) in meta.levels_min[] levels_min[id] = min end
-        for (id, max) in meta.levels_max[] levels_max[id] = max end
+        levels_id = Vector{Int64}()
+        for (id, min) in meta.levels_min 
+            levels_min[id] = min
+            push!(levels_id, id)
+        end
+        for (id, max) in meta.levels_max levels_max[id] = max end
+        # read BloomFilters 
+        for id in levels_id
+            fpath = "$path/$id.bf"
+            if isfile_pagehandle(PAGE_HANDLE, fpath)
+                f = open_pagehandle(PAGE_HANDLE, fpath)
+                size = size_pagehandle(f)
+                page = malloc_page(PAGE, size)
+                blob = Blob{BlobBloomFilter}(pointer(page), 0, size)
+                read_pagehandle(f, page, size)
+                close_pagehandle(f)
+                levels_bf[id] = BloomFilter(blob[])
+                free_page(page)
+            else error("cannot find bloom filter with path:$fpath") end
+        end
+        # create MetaData
         return new{K}(meta.next_table_id, 
                       meta.next_level_id, 
                       levels_min, 
-                      levels_max)
+                      levels_max,
+                      levels_bf)
     end
     MetaData{K}() where K = new{K}(1, 1, 
                                    Dict{Int64, K}(), 
@@ -66,8 +91,19 @@ mutable struct MetaData{K} <: AbstractMetaData{K}
 end
 
 function save_meta(s::AbstractStore{K, <:Any, PAGE, PAGE_HANDLE}) where {K, PAGE, PAGE_HANDLE}
+    # save bloom filters 
+    levels_id = collect(keys(s.meta.levels_bf))
+    for id in levels_id
+        path = "$(s.path)/$id.bf"
+        bf, page = malloc_and_init(BlobBloomFilter, s, s.meta.levels_bf[id])
+        file = open_pagehandle(PAGE_HANDLE, path, truncate=true, read=true)
+        write_pagehandle(file, page, getfield(bf, :limit))
+        close_pagehandle(file)
+        free_page(page)
+    end
+    # save actual meta data
     path = "$(s.path)/.meta"
-    page, meta = malloc_and_init(BlobMetaData{K}, s, s.meta)
+    meta, page = malloc_and_init(BlobMetaData{K}, s, s.meta)
     file = open_pagehandle(PAGE_HANDLE, path, truncate=true, read=true)
     write_pagehandle(file, page, getfield(meta, :limit))
     close_pagehandle(file)
@@ -78,17 +114,17 @@ function load_meta(::Type{K},
                    ::Type{PAGE}, 
                    ::Type{PAGE_HANDLE}, 
                    path::String) where {K, PAGE, PAGE_HANDLE}
-    path = "$(path)/.meta"
-    if isfile_pagehandle(PAGE_HANDLE, path)
-        f = open_pagehandle(PAGE_HANDLE, path)
+    fpath = "$path/.meta"
+    if isfile_pagehandle(PAGE_HANDLE, fpath)
+        f = open_pagehandle(PAGE_HANDLE, fpath)
         size = size_pagehandle(f)
         page = malloc_page(PAGE, size)
         blob = Blob{BlobMetaData{K}}(pointer(page), 0, size)
         read_pagehandle(f, page, size)
         close_pagehandle(f)
-        meta = MetaData{K}(blob)
+        meta = MetaData{K}(PAGE, PAGE_HANDLE, blob[], path)
         free_page(page)
         return meta
     end
-    return MetaData{K}()
+    nothing
 end

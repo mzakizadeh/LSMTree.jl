@@ -82,25 +82,6 @@ function restore(::Type{K},
         f = open_pagehandle(PAGE_HANDLE, file)
         size = size_pagehandle(f)
         page = malloc_page(PAGE, size)
-        blob = Blob{Level{K, V}}(pointer(page), 0, size)
-        read_pagehandle(PAGE_HANDLE, page, size)
-        s = Store{K, V}(path, blob, page)
-        push!(s.inmemory.store_ids_inuse, id)
-        close_pagehandle(f)
-        return s
-    end
-    nothing
-end
-
-function restore(::Type{K}, 
-                 ::Type{V}, 
-                 path::String, 
-                 id::Int64) where {K, V}
-    file = "$path/$id.str"
-    if isfile_pagehandle(FilePageHandle, file)
-        f = open_pagehandle(FilePageHandle, file)
-        size = size_pagehandle(f)
-        page = malloc_page(MemoryPage, size)
         blob = Blob{StoreData{K, V}}(pointer(page), 0, size)
         read_pagehandle(f, page, size)
         s = Store{K, V}(path, blob, page)
@@ -110,6 +91,11 @@ function restore(::Type{K},
     end
     nothing
 end
+
+restore(::Type{K}, 
+        ::Type{V}, 
+        path::String, 
+        id::Int64) where {K, V} = restore(K, V, MemoryPage, FilePageHandle, path, id)
 
 export get, 
        put!,

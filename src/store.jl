@@ -141,6 +141,9 @@ function gc(store::AbstractStore{K, V, PAGE, PAGE_HANDLE}) where {K, V, PAGE, PA
         delete!(store.inmemory.level_pages, deleted_id)
         free_page(deleted_id_page)
         delete_pagehandle(PAGE_HANDLE, "$(store.path)/$deleted_id.lvl", force=true)
+        # remove related BloomFilter
+        delete!(store.meta.levels_bf, deleted_id)
+        delete_pagehandle(PAGE_HANDLE, "$(store.path)/$deleted_id.bf", force=true)
     end
 end
 

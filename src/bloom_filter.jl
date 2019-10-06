@@ -120,13 +120,67 @@ function get_k_error(error_rate::Float64, k_hashes::Int)
     return m_over_n, k_errors[k_hashes][m_over_n]
 end
 
-mutable struct BloomFilter
+abstract type AbstractBloomFilter end
+
+struct BlobBloomFilter <: AbstractBloomFilter
+    array::BlobBitVector
+    k::Int
+    capacity::Int
+    error_rate::Float64
+    n_bits::Int
+end
+
+function Blobs.child_size(::Type{BlobBloomFilter}, bf::AbstractBloomFilter)
+    T = BlobBloomFilter
+    len = length(bf.array)
+    +(Blobs.child_size(fieldtype(T, :array), len))
+end
+
+function Blobs.init(blob::Blob{BlobBloomFilter}, 
+                    free::Blob{Nothing}, 
+                    bf::AbstractBloomFilter)
+    len = length(bf.array)
+    free = Blobs.init(blob.array, free, len)
+    for i in 1:len
+        blob.array[i][] = bf.array[i]
+    end
+    blob.k[] = bf.k
+    blob.capacity[] = bf.capacity
+    blob.error_rate[] = bf.error_rate
+    blob.n_bits[] = bf.n_bits
+    free
+end
+
+function malloc_and_init(::Type{BlobBloomFilter}, 
+                         s::AbstractStore{<:Any, <:Any, PAGE, <:Any},
+                         args...) where PAGE
+    T = BlobBloomFilter
+    size = Blobs.self_size(T) + Blobs.child_size(T, args...)
+    page = malloc_page(PAGE, size)
+    
+    blob = Blob{T}(pointer(page), 0, size)
+    used = Blobs.init(blob, args...)
+    @assert used - blob == size
+    
+    blob, page
+end
+
+mutable struct BloomFilter <: AbstractBloomFilter
     array::BitArray
     k::Int
     capacity::Int
     error_rate::Float64
     n_bits::Int
 end
+
+
+BloomFilter(bf::AbstractBloomFilter) = BloomFilter(
+    bf.array,
+    bf.k,
+    bf.capacity,
+    bf.error_rate,
+    bf.n_bits
+)
 
 empty(bf::BloomFilter) = BloomFilter(
     falses(1, bf.n_bits),
