@@ -195,6 +195,7 @@ function Base.merge(store::AbstractStore,
                     force_remove) where {K, V}
     result_tables = Vector{Int64}() 
     result_bounds = Vector{K}()
+    extinct_count = 0
 
     old_id = level.id
     level_id = generate_id(Level, store)
@@ -217,12 +218,13 @@ function Base.merge(store::AbstractStore,
 
     if length(indices) < 3 # If the level has at most one table
         if length(level.tables) > 0
-            table, page = merge(store, 
-                                get_table(level.tables[1], store)[], 
-                                entries, 
-                                indices[1], 
-                                indices[2], 
-                                false)
+            (table, page), c = merge(store, 
+                                   get_table(level.tables[1], store)[], 
+                                   entries, 
+                                   indices[1], 
+                                   indices[2], 
+                                   force_remove)
+            extinct_count += c
         else
             v = Vector{Entry{K, V}}()
             for i in 1:length(entries)
@@ -233,7 +235,10 @@ function Base.merge(store::AbstractStore,
                                           generate_id(Table, store), 
                                           v)
         end
-        if table.size[] > level.table_threshold_size
+        if table.size[] == 0
+            # Tables with zero entries are useless
+            free_page(page)
+        elseif table.size[] > level.table_threshold_size
             (t1, p1), (t2, p2) = split(table[], store)
             set_table(t1, store)
             push!(result_tables, t1.id[])
@@ -253,13 +258,17 @@ function Base.merge(store::AbstractStore,
     else # If the level at least two tables
         for i in 1:length(level.tables)
             if indices[i + 1] - indices[i] > 0
-                table, page = merge(store, 
-                                    get_table(level.tables[i], store)[], 
-                                    entries, 
-                                    indices[i], 
-                                    indices[i + 1], 
-                                    false)
-                if table.size[] > level.table_threshold_size
+                (table, page), c = merge(store, 
+                                       get_table(level.tables[i], store)[], 
+                                       entries, 
+                                       indices[i], 
+                                       indices[i + 1], 
+                                       force_remove)
+                extinct_count += c
+                if table.size[] == 0
+                    # Tables with zero entries are useless
+                    free_page(page)
+                elseif table.size[] > level.table_threshold_size
                     (t1, p1), (t2, p2) = split(table[], store)
                     set_table(t1, store)
                     push!(result_tables, t1.id[])
@@ -277,8 +286,8 @@ function Base.merge(store::AbstractStore,
                     free_page(page)
                 end
             else 
-                push!(result_tables, level.tables[i][])
-                push!(result_bounds, i != length(level.tables[]) ? level.bounds[i][] : i)
+                push!(result_tables, level.tables[i])
+                push!(result_bounds, i != length(level.tables) ? level.bounds[i] : i)
             end
         end
     end
@@ -288,7 +297,7 @@ function Base.merge(store::AbstractStore,
                           level_id,
                           result_tables, 
                           result_bounds,
-                          level.size + length(entries),
+                          level.size + length(entries) - extinct_count,
                           level.max_size,
                           level.table_threshold_size)
     res.prev_level[], res.next_level[] = level.prev_level, level.next_level

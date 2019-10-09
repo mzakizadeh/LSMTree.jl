@@ -119,24 +119,34 @@ function Base.merge(store::AbstractStore{K, V, <:Any, <:Any},
                     force_remove) where {K, V}
     result_entries = Vector{Entry{K, V}}()
     i, j, size = 1, start_index + 1, 0
+    # count of deleted entries
+    extinct_count = 0 
+    
     while i <= length(table) && j <= end_index
         if isequal(table.entries[i], entries[j])
             if !force_remove || !entries[j].deleted
                 push!(result_entries, entries[j])
                 size += 1
+            else 
+                extinct_count += 1
             end
             i += 1
             j += 1
+            extinct_count += 1
         elseif table.entries[i] < entries[j]
             if !force_remove || !table.entries[i].deleted 
                 push!(result_entries, table.entries[i])
                 size += 1
+            else 
+                extinct_count += 1
             end
             i += 1
         else
             if !force_remove || !entries[j].deleted
                 push!(result_entries, entries[j])
                 size += 1
+            else 
+                extinct_count += 1
             end
             j += 1
         end
@@ -145,6 +155,8 @@ function Base.merge(store::AbstractStore{K, V, <:Any, <:Any},
         if !force_remove || !table.entries[i].deleted 
             push!(result_entries, table.entries[i])
             size += 1
+        else 
+            extinct_count += 1
         end
         i += 1
     end
@@ -152,13 +164,18 @@ function Base.merge(store::AbstractStore{K, V, <:Any, <:Any},
         if !force_remove || !entries[j].deleted
             push!(result_entries, entries[j])
             size += 1
+        else 
+            extinct_count += 1
         end
         j += 1
     end
-    return malloc_and_init(Table{K, V}, 
-                           store,
-                           generate_id(Table, store),
-                           result_entries)
+
+    res = malloc_and_init(Table{K, V}, 
+                          store,
+                          generate_id(Table, store),
+                          result_entries)
+
+    return res, extinct_count
 end
 
 function split(t::Table{K, V}, s::AbstractStore{K, V, <:Any, <:Any}) where {K, V} 

@@ -1,4 +1,4 @@
-number = 1000000
+number = 10000000
 
 function write_seq(s::LSMTree.Store{Int32, Int32}, vals::Vector{Tuple{Int32, Int32}})
     for i in 1:number
@@ -32,3 +32,33 @@ function read_random(s::LSMTree.Store{Int32, Int32}, randoms::Vector{Tuple{Int32
     end
     println("$(length(randoms)) record checked")
 end
+
+# Benchmark
+
+randoms = Vector{Tuple{Int32, Int32}}()
+for i in 1:number push!(randoms, (rand(Int32), i)) end
+
+println("Write sequential")
+s = LSMTree.Store{Int32, Int32}(
+    buffer_max_size=250000, 
+    table_threshold_size=250000
+)
+@time write_seq(s, randoms)
+rm("./db", force=true, recursive=true)
+s = nothing
+
+println("Write random")
+s = LSMTree.Store{Int32, Int32}(
+    buffer_max_size=250000, 
+    table_threshold_size=250000
+)
+@time write_random(s, randoms)
+
+println("Read sequential")
+@time read_seq(s)
+
+println("Read random")
+randoms2 = shuffle(randoms)
+@time read_random(s, randoms2)
+rm("./db", force=true, recursive=true)
+s = nothing

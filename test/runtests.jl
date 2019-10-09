@@ -1,184 +1,125 @@
 module TestLSMTree
 using LSMTree, Test, Random, Blobs
 
-include("bench.jl")
-
-randoms = Vector{Tuple{Int32, Int32}}()
-for i in 1:number 
-    push!(randoms, (rand(Int32), i))
+# Clear the directory
+function clear()
+    rm("./db", force=true, recursive=true)
 end
 
-# println("Write sequential")
-# s = LSMTree.Store{Int32, Int32}()
-# @time write_seq(s, randoms)
-# delete!(s)
+clear()
 
-println("Write random")
-s = LSMTree.Store{Int32, Int32}()
-@time write_random(s, randoms)
+# include("bench.jl")
 
-# println("Read sequential")
-# @time read_seq(s)
+# Simple Put & Get
+s = LSMTree.Store{Int32, Int32}(
+    buffer_max_size=10, 
+    table_threshold_size=10
+)
+for i in 1:100 s[i] = 2 * i + 3 end
+# 10 + 20 + 40 + 80 = 150
+# has 3 levels
+# buffer is empty
+# last level is not full (has 40 entires)
+@test s.buffer.size == 0
+level1st = LSMTree.get_level(s.data.first_level[], s)[]
+@test level1st.max_size == level1st.size == 20
+level2nd = LSMTree.get_level(level1st.next_level, s)[]
+@test level2nd.max_size == level2nd.size == 40
+level3rd = LSMTree.get_level(level2nd.next_level, s)[]
+@test level3rd.max_size == 80
+@test level3rd.size == 40
+@test LSMTree.get_level(level3rd.next_level, s) === nothing
 
-println("Read random")
-randoms2 = shuffle(randoms)
-@time read_random(s, randoms)
-rm("./db", force=true, recursive=true)
+for i in 1:100 @test s[i] == 2 * i + 3 end # check data correctness
 
-# # Table
+clear()
 
-# # test merge function 
+# Update & Override
+s = LSMTree.Store{Int32, Int32}(
+    buffer_max_size=10, 
+    table_threshold_size=10
+)
+for i in 1:10 s[i] = i end
+for i in 1:20 s[i] = 2 * i end
+for i in 1:40 s[i] = 3 * i end
+for i in 1:60 s[i] = 4 * i end
 
-# # testcase 1
-# ids = [1, 2, 3, 4]
-# tmp = Vector{Blob{LSMTree.Entry{Int64, Int64}}}()
-# for i in ids 
-#     x = Blobs.malloc_and_init(LSMTree.Entry{Int64, Int64})
-#     x.key[] = i
-#     x.val[] = 2 * i
-#     push!(tmp, x)
-# end
-# t = Blobs.malloc_and_init(LSMTree.Table{Int64, Int64}, tmp)
-# ids = [5, 6, 7, 8]
-# e = Blobs.malloc_and_init(BlobVector{LSMTree.Entry{Int64, Int64}}, 5)
-# for i in 1:length(ids)
-#     e[i].key[] = ids[i]
-#     e[i].val[] = ids[i]
-# end
+for i in 1:60 @test s[i] == 4 * i end
+# length is not accurate in this state
+# because the overriden data is not removed compeletely
+@test length(s) != 60 
 
-# t2 = merge(t, e, 0, 4, false)
-# @test length(t2[]) == 8
-# @test t2.entries[1].val[] == 2
-# @test t2.entries[5].val[] == 5
+for i in 61:80 s[i] = 4 * i end
 
+for i in 1:80 @test s[i] == 4 * i end
+# data is now completely overriden
+@test length(s) == 80
 
-# # testcase 2
-# ids = [5, 6, 7, 8]
-# tmp = Vector{Blob{LSMTree.Entry{Int64, Int64}}}()
-# for i in ids 
-#     x = Blobs.malloc_and_init(LSMTree.Entry{Int64, Int64})
-#     x.key[] = i
-#     x.val[] = 2 * i
-#     push!(tmp, x)
-# end
-# t = Blobs.malloc_and_init(LSMTree.Table{Int64, Int64}, tmp)
-# ids = [1, 2, 3, 4]
-# e = Blobs.malloc_and_init(BlobVector{LSMTree.Entry{Int64, Int64}}, 5)
-# for i in 1:length(ids)
-#     e[i].key[] = ids[i]
-#     e[i].val[] = ids[i]
-# end
+clear()
 
-# t2 = merge(t, e, 0, 4, false)
-# @test length(t2[]) == 8
-# @test t2.entries[1].val[] == 1
-# @test t2.entries[5].val[] == 10
+# Delete
+s = LSMTree.Store{Int32, Int32}(
+    buffer_max_size=10, 
+    table_threshold_size=10
+)
+for i in 1:60 s[i] = i end
+for i in 1:10 delete!(s, i) end
 
+@test s.buffer.size == 0
+@test length(s) != 60
+for i in 1:10 @test s[i] === nothing end
 
-# # testcase 3
-# ids = [1, 2 ,3, 4]
-# tmp = Vector{Blob{LSMTree.Entry{Int64, Int64}}}()
-# for i in ids 
-#     x = Blobs.malloc_and_init(LSMTree.Entry{Int64, Int64})
-#     x.key[] = i
-#     x.val[] = 2 * i
-#     push!(tmp, x)
-# end
-# t = Blobs.malloc_and_init(LSMTree.Table{Int64, Int64}, tmp)
-# ids = [3, 4, 5, 6]
-# e = Blobs.malloc_and_init(BlobVector{LSMTree.Entry{Int64, Int64}}, 5)
-# for i in 1:length(ids)
-#     e[i].key[] = ids[i]
-#     e[i].val[] = ids[i]
-# end
+for i in 61:100 s[i] = i end
+@test length(s) == 90
+for i in 1:10 @test s[i] === nothing end
+for i in 11:100 @test s[i] == i end
 
-# t2 = merge(t, e, 0, 4, false)
-# @test length(t2[]) == 6
-# @test t2.entries[1].val[] == 2
-# @test t2.entries[3].val[] == 3
+clear()
 
+# Iterate
+randoms = Vector{Tuple{Int32, Int32}}()
+for i in 1:1000 push!(randoms, (rand(Int32), i)) end
 
-# # testcase 4
-# ids = [1, 2 ,3, 4]
-# tmp = Vector{Blob{LSMTree.Entry{Int64, Int64}}}()
-# for i in ids 
-#     x = Blobs.malloc_and_init(LSMTree.Entry{Int64, Int64})
-#     x.key[] = i
-#     x.val[] = 2 * i
-#     x.deleted[] = false
-#     push!(tmp, x)
-# end
-# t = Blobs.malloc_and_init(LSMTree.Table{Int64, Int64}, tmp)
-# ids = [3, 4, 5, 6]
-# e = Blobs.malloc_and_init(BlobVector{LSMTree.Entry{Int64, Int64}}, 5)
-# for i in 1:length(ids)
-#     e[i].key[] = ids[i]
-#     e[i].val[] = ids[i]
-#     e[i].deleted[] = false
-# end
-# e[1].deleted[] = true
+s = LSMTree.Store{Int32, Int32}(
+    buffer_max_size=10, 
+    table_threshold_size=10
+)
+for i in 1:1000 s[i] = first(randoms[i]) end
 
-# t2 = merge(t, e, 0, 4, true)
-# @test length(t2[]) == 5
-# @test t2.entries[1].val[] == 2
-# @test t2.entries[3].val[] == 4
+iter = LSMTree.Iterator(s)
+let prev = nothing, c = 0
+    for e in iter 
+        c += 1
+        @test prev === nothing || prev < e
+        prev = e
+    end
+    @test c == length(randoms)
+end
 
+# Snapshot & Restore
+close(s)
+s = nothing 
+s2 = LSMTree.restore(Int32, Int32, "./db", 1009)
+for (v, k) in randoms @test s2[k] == v end
 
-# # test split function
-# ids = [1, 2, 3, 4, 5, 6, 7]
-# tmp = Vector{Blob{LSMTree.Entry{Int64, Int64}}}()
-# for i in ids 
-#     x = Blobs.malloc_and_init(LSMTree.Entry{Int64, Int64})
-#     x.key[] = i
-#     x.val[] = 2 * i
-#     push!(tmp, x)
-# end
-# t = Blobs.malloc_and_init(LSMTree.Table{Int64, Int64}, tmp)
+clear()
 
-# r = LSMTree.split(t)
-# @test length(r[1][]) == 3
-# @test length(r[2][]) == 4
+# Complex Types
+struct Foo
+    a::Int
+    b::Float32
+    c::Tuple{Int, Int}
+end
+Base.isless(f1::Foo, f2::Foo) = f1.a + first(f1.c) < f2.a + first(f2.c)
 
-
-# # Level
-
-# # test partition function 
-# ids = [1, 1, 3, 3, 5, 10]
-# e = Blobs.malloc_and_init(BlobVector{LSMTree.Entry{Int64, Int64}}, 6)
-# for i in 1:length(ids)
-#     e[i].key[] = ids[i]
-#     e[i].val[] = ids[i]
-# end
-# ids = [2, 5, 7]
-# b = Blobs.malloc_and_init(BlobVector{Int64}, 3)
-# for i in 1:length(ids)
-#     b[i][] = ids[i]
-# end
-
-# t = LSMTree.partition(b[], e[])
-# @test t == [0, 2, 5, 5, 6]
-
-
-# # test compact function
-# ids = [1, 2, 3, 4]
-# tmp = Vector{Blob{LSMTree.Entry{Int64, Int64}}}()
-# for i in ids 
-#     x = Blobs.malloc_and_init(LSMTree.Entry{Int64, Int64})
-#     x.key[] = i
-#     x.val[] = 2 * i
-#     push!(tmp, x)
-# end
-# t = Blobs.malloc_and_init(LSMTree.Table{Int64, Int64}, tmp)
-# LSMTree.inmemory_tables[t.id[]] = t
-# ids = [7, 8, 9, 10]
-# tmp = Vector{Blob{LSMTree.Entry{Int64, Int64}}}()
-# for i in ids 
-#     x = Blobs.malloc_and_init(LSMTree.Entry{Int64, Int64})
-#     x.key[] = i
-#     x.val[] = 2 * i
-#     push!(tmp, x)
-# end
-# t = Blobs.malloc_and_init(LSMTree.Table{Int64, Int64}, tmp)
-# LSMTree.inmemory_tables[t.id[]] = t
+K = Int32
+V = Foo
+s = LSMTree.Store{K, V}(
+    buffer_max_size=10, 
+    table_threshold_size=10
+)
+for i in 1:100 
+    s[i] = Foo(rand(Int), rand(Float32), (rand(Int), rand(Int)))
+end
 
 end
